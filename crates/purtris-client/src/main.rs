@@ -14,6 +14,8 @@ mod font;
 mod game;
 mod gfx;
 mod input;
+mod ranks;
+mod ranks_ui;
 mod render;
 mod save;
 mod script;

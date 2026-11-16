@@ -116,6 +116,8 @@ pub struct Results {
     pub list: ListState,
     pub saved: Option<String>,
     pub new_record: Option<String>,
+    /// XP earned and leaderboard places from this match
+    pub gain: crate::ranks::Gain,
 }
 
 fn analyze(g: &Game) -> Vec<Finding> {
@@ -226,6 +228,8 @@ pub enum Screen {
     Select(Box<crate::story_ui::Select>),
     /// first-run setup with Mira
     Setup { page: usize, sel: usize },
+    /// level and prestige (page 0) or a leaderboard (page 1..)
+    Ranks { page: usize, confirm: bool },
     /// Mira's tour of the modes
     Tour { page: usize, t: f32 },
     Quit,
@@ -234,6 +238,8 @@ pub enum Screen {
 pub struct App {
     pub st: Settings,
     pub prog: Progress,
+    /// level, prestige and leaderboards
+    pub ranks: crate::ranks::Ranks,
     pub card: Card,
     pub input: Input,
     pub synth: SharedSynth,
@@ -290,6 +296,7 @@ impl App {
         let mut app = App {
             st,
             prog: Progress::load(),
+            ranks: crate::ranks::Ranks::load(),
             card: Card::load(),
             input,
             synth,
@@ -495,6 +502,7 @@ impl App {
             Screen::Scene { id, line, t, then } => self.scene_screen(nav, id, line, t, then),
             Screen::Select(s) => self.select_screen(nav, s),
             Screen::Setup { page, sel } => self.setup_screen(nav, page, sel),
+            Screen::Ranks { page, confirm } => self.ranks_screen(nav, page, confirm),
             Screen::Tour { page, t } => self.tour_screen(nav, page, t),
             Screen::Quit => Screen::Quit,
         }
@@ -678,6 +686,15 @@ impl App {
                 v
             }
             5 => vec![("identification-card", "Player card".to_string(), format!("{}  -  favorite style {}. Local only, no account needed.", self.card.name, Style::ALL[self.card.favorite % 4].name()))],
+            6 => {
+                let r = &self.ranks;
+                let mut v = vec![("user-circle", format!("Your level  -  {}", r.level), format!("{}  {}  -  {} XP earned in all. Reach level 50 to prestige.", crate::ranks::title(r.level), crate::ranks::PRESTIGE[r.prestige as usize].0, r.lifetime))];
+                for b in crate::ranks::BOARDS.iter() {
+                    let top = r.boards.get(b.id).and_then(|l| l.first()).map(|e| format!("Top: {} by {}", crate::ranks::fmt_value(b, e.value), e.name)).unwrap_or_else(|| "No scores yet. Be the first!".into());
+                    v.push(("trophy", b.name.to_string(), top));
+                }
+                v
+            }
             _ => vec![
                 ("palette", "Settings".to_string(), "Theme, picture preset, sound, handling and accessibility.".to_string()),
                 ("game-controller", "Controls".to_string(), "Rebind keys. Gamepads are detected automatically.".to_string()),
@@ -690,7 +707,7 @@ impl App {
 
     fn main_menu(&mut self, nav: &Nav, _s: ListState) -> Screen {
         use crate::font::Weight;
-        const CATS: [(&str, &str); 7] = [("map-trifold", "Story"), ("sword", "Versus"), ("trophy", "Solo"), ("graduation-cap", "Training"), ("film-strip", "Replays"), ("user-circle", "Profile"), ("gear-six", "Settings")];
+        const CATS: [(&str, &str); 8] = [("map-trifold", "Story"), ("sword", "Versus"), ("timer", "Solo"), ("graduation-cap", "Training"), ("film-strip", "Replays"), ("user-circle", "Profile"), ("trophy", "Ranks"), ("gear-six", "Settings")];
         let l = look(self.st.theme);
         let t = self.t;
         self.bg_blur(60);
@@ -897,6 +914,7 @@ impl App {
                 }
             }
             (5, _) => Screen::Card(ListState::default(), None),
+            (6, i) => Screen::Ranks { page: i, confirm: false },
             (_, 0) => Screen::Settings(ListState::default(), 0),
             (_, 1) => Screen::Controls(ListState::default(), 0, None),
             (_, 2) => Screen::Help(0),
@@ -2092,6 +2110,23 @@ impl App {
         let mut objectives = Vec::new();
         let mut new_record = None;
         let won = g.won();
+        let mut xp_bonus: Vec<(String, u64)> = Vec::new();
+        if let Origin::Story { world, node, diff, .. } = &g.origin {
+            let before = self.prog.node(&format!("{}-{}", world, node));
+            if won && before & (1 << diff) == 0 {
+                xp_bonus.push(("Story node cleared".into(), 150 + 50 * *diff as u64));
+            }
+            let n = &WORLDS[*world].nodes[*node];
+            if won && *diff > 0 && before & 8 == 0 && g.objective_met(n.extra, *diff) {
+                xp_bonus.push(("Bonus star".into(), 100));
+            }
+        }
+        if let Origin::Lesson(i) = &g.origin {
+            let le = &LESSONS[*i];
+            if !self.prog.lessons.contains_key(le.id) && g.objective_met(le.obj, 1) {
+                xp_bonus.push(("Lesson passed".into(), 120));
+            }
+        }
         match &g.origin {
             Origin::Story { world, node, diff, .. } => {
                 let n = &WORLDS[*world].nodes[*node];
@@ -2148,12 +2183,98 @@ impl App {
             _ => {}
         }
         let findings = if matches!(g.origin, Origin::Lesson(_) | Origin::Sandbox(..) | Origin::Story { .. } | Origin::Solo(..) | Origin::Arcade { .. }) { analyze(&g) } else { Vec::new() };
+        if new_record.is_some() {
+            xp_bonus.push(("Personal record".into(), 150));
+        }
+        let gain = self.award(&g, won, xp_bonus);
         self.sfx(if won { Sfx::Win } else { Sfx::Lose });
         self.pose(if won { 1 } else { 3 });
         if let Ok(mut s) = self.synth.lock() {
             s.set_intensity(false, false, false);
         }
-        Screen::Results(Box::new(Results { game: *g, objectives, findings, list: ListState::default(), saved: None, new_record }))
+        Screen::Results(Box::new(Results { game: *g, objectives, findings, list: ListState::default(), saved: None, new_record, gain }))
+    }
+
+    /// XP for a finished match and its leaderboard entries.
+    fn award(&mut self, g: &Game, won: bool, bonus: Vec<(String, u64)>) -> crate::ranks::Gain {
+        use crate::ranks::Gain;
+        let mut gain = Gain::default();
+        if matches!(g.origin, Origin::Demo(_) | Origin::Replay) || g.playback.is_some() {
+            return gain;
+        }
+        let me = (0..6).find(|&i| g.humans[i]).unwrap_or(0);
+        let seat = &g.m.seats[me];
+        let mut add = |why: &str, n: u64| {
+            if n > 0 {
+                gain.reasons.push((why.to_string(), n));
+            }
+        };
+        add("Match played", if g.m.tick > 600 { 40 } else { 10 });
+        if won && g.m.active_count() > 1 {
+            add("Victory", 120);
+        } else if won {
+            add("Goal reached", 80);
+        }
+        if let Some(b) = &seat.board {
+            match b {
+                Board::Quad(q) => add("Lines cleared", (q.lines as u64 * 3).min(240)),
+                Board::Chain(_) => add("Best chain", (seat.stats.max_chain as u64 * 30).min(300)),
+                Board::Capsule(_) => {
+                    let germs = g.log.iter().filter(|(_, s, e)| *s as usize == me && matches!(e, Ev::VirusClear)).count() as u64;
+                    add("Germs cleared", (germs * 6).min(240));
+                }
+                Board::Panel(p) => add("Best chain", (p.max_chain as u64 * 25).min(250)),
+            }
+        }
+        add("Attack sent", (seat.stats.sent as u64 * 2).min(200));
+        for (why, n) in bonus {
+            add(&why, n);
+        }
+        let base: u64 = gain.reasons.iter().map(|r| r.1).sum();
+        let (xp, levels) = self.ranks.add_xp(base);
+        gain.xp = xp;
+        gain.levels_gained = levels;
+        // leaderboards
+        let name = ui::nice(&self.card.name);
+        let ch = crate::cast::CAST[g.chars[me].min(crate::cast::CAST.len() - 1)].id.to_string();
+        let place = |board: &str, rank: Option<usize>, gain: &mut Gain| {
+            if let (Some(r), Some(b)) = (rank, crate::ranks::BOARDS.iter().find(|b| b.id == board)) {
+                gain.placed.push((b.name.to_string(), r));
+            }
+        };
+        match &g.origin {
+            Origin::Solo(m, _) => {
+                let (board, value) = match m {
+                    Mode::QuadSprint if won => ("QuadSprint", Some(g.m.tick as u64)),
+                    Mode::QuadTwenty if won => ("QuadTwenty", Some(g.m.tick as u64)),
+                    Mode::QuadMarathon => ("QuadMarathon", seat.board.as_ref().map(|b| b.score())),
+                    Mode::ChainEndless => ("ChainEndless", seat.board.as_ref().map(|b| b.score())),
+                    Mode::CapsuleLevelRun => ("CapsuleLevelRun", seat.board.as_ref().map(|b| b.score())),
+                    Mode::PanelEndless => ("PanelEndless", seat.board.as_ref().map(|b| b.score())),
+                    _ => ("", None),
+                };
+                if let Some(v) = value.filter(|v| *v > 0) {
+                    let r = self.ranks.submit(board, v, &name, &ch);
+                    place(board, r, &mut gain);
+                }
+            }
+            Origin::Arcade { stage, .. } => {
+                let reached = *stage as u64 + if won { 1 } else { 0 };
+                if reached > 0 {
+                    let r = self.ranks.submit("Arcade", reached, &name, &ch);
+                    place("Arcade", r, &mut gain);
+                }
+            }
+            Origin::Versus(_) if won => {
+                let r = self.ranks.bump("VersusWins", &name, &ch, 1, false);
+                place("VersusWins", r, &mut gain);
+            }
+            _ => {}
+        }
+        let life = self.ranks.lifetime;
+        self.ranks.bump("TotalXP", &name, &ch, life, true);
+        self.ranks.save();
+        gain
     }
 
     fn results(&mut self, nav: &Nav, mut r: Box<Results>) -> Screen {
@@ -2227,7 +2348,26 @@ impl App {
                 crate::assets::draw_char(&mut self.cv, rid, if won { "sad" } else { "delighted" }, 1010, 668, 220, 255);
             }
         }
-        self.cv.text_s(60, 410, &format!("{} ticks   checksum {:016X}", g.m.tick, g.m.checksum()), 1, l.dim);
+        // XP: the bar fills from where you were to where you are now
+        if r.gain.xp > 0 {
+            use crate::font::Weight;
+            let gn = &r.gain;
+            let lv = self.ranks.level;
+            let need = crate::ranks::xp_to_next(lv);
+            let frac = if lv >= crate::ranks::MAX_LEVEL { 1.0 } else { self.ranks.xp as f32 / need as f32 };
+            crate::ranks_ui::level_badge(&mut self.cv, 74, 452, 26, lv, self.ranks.prestige);
+            self.cv.text_weight(110, 432, &format!("+{} XP", gn.xp), 2, l.accent, 255, Weight::Black);
+            let why: Vec<String> = gn.reasons.iter().take(4).map(|(w, n)| format!("{} {}", w, n)).collect();
+            self.cv.text_s(230, 438, &why.join("   "), 1, l.dim);
+            self.cv.round_rect(110, 462, 610, 10, 5, 0xFF2A_3150, 255);
+            self.cv.round_rect(110, 462, ((610.0 * frac) as i32).max(10), 10, 5, l.accent, 255);
+            if gn.levels_gained > 0 {
+                let msg = format!("Level up! Level {}  {}", lv, crate::ranks::title(lv));
+                self.cv.text_weight(110, 474, &msg, 1, l.good, 255, Weight::Bold);
+            } else if let Some((b, k)) = gn.placed.first() {
+                self.cv.text_weight(110, 474, &format!("#{} on the {} leaderboard", k, b), 1, l.good, 255, Weight::Bold);
+            }
+        }
         // objectives and analyzer (or match notes)
         ui::panel(&mut self.cv, 770, 130, 470, 540, &l);
         let mut y = 146;
@@ -2276,7 +2416,7 @@ impl App {
         if next_stage {
             rows.insert(0, Row::act("NEXT RIVAL"));
         }
-        let gg = ListGeom { x: 60, y: 460, w: 660, row_h: 42, visible: 5, scale: 2 };
+        let gg = ListGeom { x: 60, y: 512, w: 660, row_h: 38, visible: 5, scale: 2 };
         let ev = list(&mut self.cv, &l, nav, &rows, &mut r.list, &gg, self.t);
         if let Some(p) = &r.saved {
             self.cv.text_s(60, 680, p, 1, l.dim);
