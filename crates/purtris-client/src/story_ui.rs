@@ -144,9 +144,10 @@ impl App {
         self.bg(0.0);
         ui::title(&mut self.cv, "Choose your characters", "Each player moves with their own keys or gamepad. Confirm to lock in.", &l);
         let n = CAST.len();
-        let cols = 6usize;
-        let tile = 104;
-        let gap = 14;
+        // two rows whatever the cast size: wider rows of smaller tiles for a big cast
+        let cols = n.div_ceil(2).max(6);
+        let tile = if cols > 6 { (1180 / cols as i32 - 12).min(104) } else { 104 };
+        let gap = if cols > 6 { 12 } else { 14 };
         let grid_w = cols as i32 * tile + (cols as i32 - 1) * gap;
         let gx = 640 - grid_w / 2;
         let gy = 116;

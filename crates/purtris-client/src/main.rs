@@ -94,6 +94,12 @@ fn main() {
         }
     };
     app.input.attach(&mut screen.win);
+    // --scene ID opens straight on a story scene (writers and testers)
+    if args.get(1).map(|a| a == "--scene").unwrap_or(false) {
+        if let Some(sc) = args.get(2).and_then(|id| cast::SCENES.iter().find(|s| s.id == id.as_str())) {
+            app.screen = app::Screen::Scene { id: sc.id, line: 0, t: 0.0, then: Box::new(app::Screen::Title) };
+        }
+    }
     let mut present = Presenter::default();
     let mut last = Instant::now();
     let mut next = Instant::now();

@@ -139,3 +139,17 @@ The user wants the story to feel like it belongs to the great puzzle-game tradit
 - Deadpan medicine against invading germs (Clinic Moon's tone).
 - Cute mascots and slapstick between serious beats: the comedy and the sincerity share a scene.
 Keep everything original: invent new terms, places and jokes. No references to real games, ever.
+
+## Revision: someone dies and comes back (the finale)
+The user wants a death and a return. It is **Kai**, and it mirrors Sena:
+- `w4_clear` (after beating Kaede): forgiveness, Kaede agrees, the Commons reopen. Everyone arrives.
+- NEW `w4_fall` (plays right after `w4_clear`): the first match on the reopened Commons starts joyful, then the
+  board overflows again (seven years of gray rows were never cleared). Mira slips toward the top line; Kai
+  pushes her clear, exactly as Sena did, and is swallowed. His last line is a joke about his snacks. He is
+  gone: a new gray row with a hoodie-blue streak. Silence. Kaede breaks: "Not again." This must land hard.
+- `epilogue` becomes the return: nobody leaves. Every champion takes a side of the Commons and they play
+  together, all styles, all night, clearing gray rows one by one (Nami's light guiding, Hana naming the rows,
+  Yuki keeping count, Rin giving everything away, Kaede finally chaining). When the hoodie-blue row clears,
+  Sena's voice speaks once through the box (speaker `mira`, expression `shocked`, quoted, short parenthetical):
+  she held the board up for seven years and has one last push in her; she sends Kai back and can finally
+  rest. Kai comes back, blinking, alive, hungry. Bittersweet joy. Last line funny and warm.

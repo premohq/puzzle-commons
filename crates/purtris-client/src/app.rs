@@ -1193,7 +1193,13 @@ impl App {
         const CLEAR: [&str; 5] = ["w0_clear", "w1_clear", "w2_clear", "w3_clear", "w4_clear"];
         if let Origin::Story { world, node: 5, .. } = origin {
             if won && !self.scene_seen(CLEAR[(*world).min(4)]) {
-                let next = if *world >= 4 && !self.scene_seen("epilogue") { self.play_scene("epilogue", back) } else { back };
+                // the finale: the Commons reopen, then the fall, then everyone brings Kai back
+                let next = if *world >= 4 && !self.scene_seen("epilogue") {
+                    let ep = self.play_scene("epilogue", back);
+                    self.play_scene("w4_fall", ep)
+                } else {
+                    back
+                };
                 return self.play_scene(CLEAR[(*world).min(4)], next);
             }
         }

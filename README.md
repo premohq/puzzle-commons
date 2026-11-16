@@ -9,7 +9,7 @@
   <img alt="Engine: Rust, written from scratch" src="https://img.shields.io/badge/engine-Rust%2C%20from%20scratch-f2434f">
   <img alt="Styles: 4" src="https://img.shields.io/badge/styles-Quad%20%C2%B7%20Chain%20%C2%B7%20Capsule%20%C2%B7%20Panel-5cd3ff">
   <img alt="Players: up to 6" src="https://img.shields.io/badge/players-up%20to%206-62c454">
-  <img alt="Cast: 11 characters" src="https://img.shields.io/badge/cast-11%20characters-ff9fcf">
+  <img alt="Cast: 19 characters" src="https://img.shields.io/badge/cast-19%20characters-ff9fcf">
   <a href="LICENSE"><img alt="License: GPL-3.0" src="https://img.shields.io/badge/license-GPL--3.0-a9a6ff"></a>
 </p>
 
@@ -43,8 +43,9 @@
 - **A story with a heart:** Mira, a puzzle courier, and her friend Kai cross five worlds to reopen the
   Commons, where every style used to play together. It's funny and cute, with a mystery underneath: why
   Queen Kaede split the worlds, what the gray garbage blocks really are, and what Mira carries in her
-  puzzle box. Twenty-two visual-novel scenes play between the story's thirty matches.
-- **An anime cast, rendered in 3D:** eleven characters, toon-shaded with an ink outline in Blender, eight
+  puzzle box. Twenty-three visual-novel scenes play between the story's thirty matches, and the finale costs
+  someone everything before everyone brings them back.
+- **An anime cast, rendered in 3D:** nineteen characters, toon-shaded with an ink outline in Blender, eight
   expressions each, with rigged hands. They stand beside the boards and react to the match (always in the
   story, optional in versus), cheer on the results screen, and pick up the dialogue in every scene.
 - **Character select:** each player moves their own cursor with their own keyboard half or gamepad.
@@ -167,7 +168,8 @@ renders every character in eight expressions (full body and portrait) into `asse
 All free licenses; the details are in each folder's license file.
 
 - **Characters:** the VRoid Studio sample avatars by the VRoid Project / pixiv Inc., released under CC0
-  (`third_party/vroid_cc0/LICENSE.txt`), posed, recolored and toon-rendered for this game. Names, roles and
+  (`third_party/vroid_cc0/LICENSE.txt`), posed, recolored and toon-rendered for this game; eight more cast
+  members are built from the same CC0 parts (hairstyles moved between models, new colors). Names, roles and
   story are this game's own.
 - **3D worlds:** Quaternius Stylized Nature MegaKit and Medieval Village MegaKit, Kenney Nature Kit, Poly Haven
   (all CC0).

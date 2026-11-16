@@ -9,3 +9,11 @@ human sora avatarsample_d_0
 human ren sakurada_fumiriya
 human taro base_male
 human emi base_female
+human aoi base_female
+human haru base_male
+human mei avatarsample_g
+human toma sakurada_fumiriya
+human luna avatarsample_f
+human kiko hairsample_female
+human jun base_male
+human saki avatarsample_d_darkness

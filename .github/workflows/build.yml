@@ -46,7 +46,7 @@ jobs:
             os: windows-latest
             dist: puzzle-commons-windows-x86_64
           - name: macOS universal
-            os: macos-14
+            os: macos-latest
             dist: puzzle-commons-macos-universal
     runs-on: ${{ matrix.os }}
     steps:

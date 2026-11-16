@@ -131,7 +131,7 @@ pub const WORLDS: [World; 5] = [
             Node { name: "Mixed Pair", line: "A capsule medic fights beside you against blocks and blobs. Yuki's orders: \"Don't top out. Paperwork.\"", level: team(K, &[QuadPpt, ChainTsu], None), extra: Obj::TeamTwoAlive },
             Node { name: "Three by Three", line: "Six boards at once, so watch who is sending at you. Kaede sends at everyone. Mostly at herself.", level: team(&[ChainTsu, PanelPdp], &[QuadPpt, CapsuleVs, ChainTsu], None), extra: Obj::TeamTwoAlive },
             Node { name: "Free For All", line: "Three players, no teams, last one standing wins. After today, nobody has to stand alone.", level: Level { mode: Mode::Versus, human: None, allies: NONE, foes: &[QuadPpt, PanelPdp], ffa: true, boss: false }, extra: Obj::SendAtLeast(8, 16) },
-            Node { name: "Grand Voyage", line: "The volcano is waking. Everything you've learned, all at once. One last delivery. Let's finish this together!", level: Level { mode: Mode::Versus, human: None, allies: &[PanelPdp, CapsuleVs], foes: &[QuadPpt, ChainTsu, PanelPdp], ffa: false, boss: true }, extra: Obj::TeamTwoAlive },
+            Node { name: "Grand Voyage", line: "The volcano is waking. Everything you've learned, all at once. Old boards remember. Let's finish this together!", level: Level { mode: Mode::Versus, human: None, allies: &[PanelPdp, CapsuleVs], foes: &[QuadPpt, ChainTsu, PanelPdp], ffa: false, boss: true }, extra: Obj::TeamTwoAlive },
         ],
     },
 ];

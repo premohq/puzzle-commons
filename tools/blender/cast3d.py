@@ -157,6 +157,42 @@ def relax_hands(arm, bones, fist=0.0):
                 rotate_bone_axis(arm, bones[hb], Vector((0, 0, 1)), ang if side == "left" else -ang)
 
 
+def is_hair(o):
+    # VRoid exports the hairstyle as its own "Hair..." object (body materials can mention hair too)
+    return o.type == "MESH" and o.name.lower().startswith("hair")
+
+
+def transplant_hair(arm, bones, meshes, donor):
+    """Give a character another model's hairstyle: delete their own hair meshes, import the
+    donor, keep only its hair, line its head up with ours, and make the donor's skeleton follow
+    our head bone (Child Of), so the hair moves with every pose."""
+    for o in list(meshes):
+        if is_hair(o):
+            meshes.remove(o)
+            bpy.data.objects.remove(o, do_unlink=True)
+    arm_b, meshes_b, vrm_b, gltf_b = import_vrm(os.path.join(VRM_DIR, donor + ".vrm"))
+    bones_b = bone_map(vrm_b, gltf_b)
+    keep = []
+    for o in meshes_b:
+        if is_hair(o):
+            keep.append(o)
+        else:
+            bpy.data.objects.remove(o, do_unlink=True)
+    bpy.context.view_layer.update()
+    ha = arm.matrix_world @ arm.pose.bones[bones["head"]].head
+    hb = arm_b.matrix_world @ arm_b.pose.bones[bones_b["head"]].head
+    arm_b.location = arm_b.location + (ha - hb)
+    bpy.context.view_layer.update()
+    con = arm_b.constraints.new("CHILD_OF")
+    con.target = arm
+    con.subtarget = bones["head"]
+    pb = arm.pose.bones[bones["head"]]
+    con.inverse_matrix = (arm.matrix_world @ pb.matrix).inverted()
+    bpy.context.view_layer.update()
+    meshes.extend(keep)
+    return keep
+
+
 def posed_bounds(meshes):
     """World bounds of the meshes as deformed by the current pose (not the rest pose)."""
     dg = bpy.context.evaluated_depsgraph_get()
@@ -410,6 +446,7 @@ def preview():
 
 # ------------------------------------------------------------------ the cast
 # id, source model, tints by material keyword, role (only for reading this table)
+# Each entry: id, body model, tints by material keyword, role, and optionally a hair donor model.
 HUMANS = [
     ("mira", "hairsample_female", {"HAIR": 0xFFA0CF}, "host and hero"),
     ("kai", "hairsample_male", {}, "Mira's friend and sparring rival"),
@@ -422,6 +459,15 @@ HUMANS = [
     ("ren", "sakurada_fumiriya", {"HAIR": 0x8A5634}, "versus regular"),
     ("taro", "base_male", {"HAIR": 0x2E6E58}, "versus regular"),
     ("emi", "base_female", {"HAIR": 0xFF9A3C}, "versus regular"),
+    # new cast members built from the same CC0 parts: hair swaps and recolors
+    ("aoi", "base_female", {"HAIR": 0x2FB7A8, "CLOTH": 0x7A2340}, "versus regular", "sendagaya_shino"),
+    ("haru", "base_male", {"HAIR": 0xD8C07A, "CLOTH": 0x2F5D3A}, "versus regular", "hairsample_male"),
+    ("mei", "avatarsample_g", {"HAIR": 0x1C1A24, "CLOTH": 0x8E1E34}, "versus regular", "avatarsample_d_0"),
+    ("toma", "sakurada_fumiriya", {"HAIR": 0xE8ECF4, "CLOTH": 0x3A3F4A}, "versus regular", "hairsample_male"),
+    ("luna", "avatarsample_f", {"HAIR": 0x8A5CF0, "CLOTH": 0x5B3BB0}, "versus regular", "sendagaya_shino"),
+    ("kiko", "hairsample_female", {"HAIR": 0x7FE0B8, "CLOTH": 0xF2D45C}, "versus regular", "avatarsample_e"),
+    ("jun", "base_male", {"HAIR": 0x23262E, "CLOTH": 0xE6E2D8}, "versus regular", "sakurada_fumiriya"),
+    ("saki", "avatarsample_d_darkness", {"HAIR": 0xF4EEFF, "CLOTH": 0x26407A}, "versus regular", "avatarsample_g"),
 ]
 # The creatures were tried and left out of the game (the anime cast reads better together);
 # render them with `cast3d.py <repo> creatures` if they are wanted again.
@@ -463,7 +509,9 @@ def reset_pose(arm):
 
 def cast():
     os.makedirs(OUT, exist_ok=True)
-    for cid, src, tints, _role in HUMANS:
+    for entry in HUMANS:
+        cid, src, tints, _role = entry[:4]
+        donor = entry[4] if len(entry) > 4 else None
         if ONLY and cid not in ONLY:
             continue
         sc = T.eevee_scene(448, 960, transparent=True, samples=48)
@@ -473,6 +521,8 @@ def cast():
         lights(sc)
         arm, meshes, vrm, gltf = import_vrm(os.path.join(VRM_DIR, src + ".vrm"))
         bones = bone_map(vrm, gltf)
+        if donor:
+            transplant_hair(arm, bones, meshes, donor)
         toon_meshes(meshes, tints=tints)
         outline(meshes)
         # one framing for all eight poses (so sizes match between expressions), measured on
@@ -536,8 +586,8 @@ def cast():
             render(sc, os.path.join(OUT, "%s_%s.png" % (cid, ex)))
     # the roster the game reads
     with open(os.path.join(OUT, "cast.txt"), "w") as f:
-        for cid, src, _t, role in HUMANS:
-            f.write("human %s %s\n" % (cid, src))
+        for entry in HUMANS:
+            f.write("human %s %s\n" % (entry[0], entry[1]))
         for cid, name in CREATURES:
             f.write("creature %s %s\n" % (cid, name))
 
