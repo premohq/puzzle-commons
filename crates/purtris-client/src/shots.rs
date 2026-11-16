@@ -212,3 +212,39 @@ pub fn run(dir: &str, width: i32) {
         save(&app, dir, "25_results");
     }
 }
+
+/// The README banner: a world map, the cast lined up, the logo. 1920 x 720.
+pub fn banner(path: &str) {
+    let synth = Arc::new(Mutex::new(crate::audio::Synth::new()));
+    let input = crate::input::Input::new(None);
+    let mut app = App::new(input, synth, false);
+    app.st = crate::save::Settings::default();
+    app.st.benched = true;
+    app.apply_settings();
+    app.cv = crate::gfx::Canvas::screen(1920);
+    // the band that is kept is layout y 120..600
+    app.title_backdrop(4.5);
+    for (id, ex, x, foot, h, flip) in [
+        ("kai", "smug", 105, 690, 560, false),
+        ("nami", "smile", 225, 670, 540, false),
+        ("hana", "delighted", 1175, 670, 540, true),
+        ("rin", "smug", 1055, 690, 560, true),
+        ("mira", "delighted", 365, 740, 610, false),
+        ("kaede", "smug", 915, 740, 610, true),
+    ] {
+        crate::assets::draw_char_ex(&mut app.cv, id, ex, x, foot, h, 255, flip);
+    }
+    crate::assets::logo(&mut app.cv, 640 - 255, 150, 510);
+    let tag = "Four puzzle sports.  One board.  Open source.";
+    let tw = crate::gfx::Canvas::text_wb(tag, 2, crate::font::Weight::Black) + 56;
+    app.cv.round_rect(640 - tw / 2 - 4, 452, tw + 8, 50, 25, 0xFF3B_2A57, 255);
+    app.cv.round_rect(640 - tw / 2, 456, tw, 42, 21, 0xFFFF_F6D6, 255);
+    app.cv.text_weight(640 - tw / 2 + 28, 465, tag, 2, 0xFF3B_2A57, 255, crate::font::Weight::Black);
+    // crop the middle band (16:6)
+    let (w, h) = (app.cv.w as usize, app.cv.h as usize);
+    let band = w * 6 / 16;
+    let top = (h - band) / 2;
+    let px: Vec<u32> = app.cv.px[top * w..(top + band) * w].to_vec();
+    crate::png::write(path, w, band, &px).unwrap();
+    println!("wrote {}", path);
+}

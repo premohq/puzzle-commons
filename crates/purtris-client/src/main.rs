@@ -68,6 +68,10 @@ fn main() {
         }
         return;
     }
+    if args.get(1).map(|a| a == "--banner").unwrap_or(false) {
+        shots::banner(args.get(2).map(|s| s.as_str()).unwrap_or("banner.png"));
+        return;
+    }
     if args.get(1).map(|a| a == "--bench").unwrap_or(false) {
         for w in [1280, 1920, 2560] {
             shots::bench(w);

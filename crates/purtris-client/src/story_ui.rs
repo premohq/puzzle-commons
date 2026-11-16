@@ -25,6 +25,19 @@ pub struct Select {
 
 const SEAT_COLORS: [u32; 6] = [0xFFFF_6B8B, 0xFF4F_B4FF, 0xFF6B_E08A, 0xFFFF_C14D, 0xFFB7_8CFF, 0xFF4F_E0D0];
 
+/// Bots keep their character unless a human took it; then they take the next free one.
+fn resolve(header: &MatchHeader, cursor: &[usize; 6], humans: &[usize]) -> [usize; 6] {
+    let n = CAST.len();
+    let mut chars = *cursor;
+    let taken: Vec<usize> = humans.iter().map(|&i| cursor[i]).collect();
+    for i in 0..6 {
+        if header.seats[i].kind == SeatKind::Bot && taken.contains(&chars[i]) {
+            chars[i] = (0..n).map(|d| (chars[i] + d) % n).find(|c| !taken.contains(c) && !chars.iter().enumerate().any(|(j, x)| j != i && x == c)).unwrap_or(chars[i]);
+        }
+    }
+    chars
+}
+
 impl App {
     pub(crate) fn scene_seen(&self, id: &str) -> bool {
         self.prog.records.contains_key(&format!("scene.{}", id))
@@ -219,6 +232,7 @@ impl App {
             }
         }
         // seat cards: every active seat with its character
+        let shown = resolve(&s.header, &s.cursor, &humans);
         let seats: Vec<usize> = (0..6).filter(|&i| s.header.seats[i].kind != SeatKind::Closed).collect();
         let cw = (1180 / seats.len().max(1) as i32).min(300);
         let total = cw * seats.len() as i32;
@@ -227,7 +241,7 @@ impl App {
         for (j, &i) in seats.iter().enumerate() {
             let x = 640 - total / 2 + j as i32 * cw + 6;
             let w = cw - 12;
-            let m = &CAST[s.cursor[i]];
+            let m = &CAST[shown[i]];
             let human = s.header.seats[i].kind == SeatKind::Human;
             self.cv.glass(x, card_y, w, card_h, 22, GLASS, GLASS_A);
             self.cv.set_clip(x + 2, card_y + 2, w - 4, card_h - 4);
@@ -261,14 +275,7 @@ impl App {
         if all {
             s.go_t += self.dt;
             if s.go_t > 0.6 {
-                // bots keep their characters unless a human took one: then they take the next free
-                let mut chars = s.cursor;
-                let taken: Vec<usize> = humans.iter().map(|&i| s.cursor[i]).collect();
-                for i in 0..6 {
-                    if s.header.seats[i].kind == SeatKind::Bot && taken.contains(&chars[i]) {
-                        chars[i] = (0..n).map(|d| (chars[i] + d) % n).find(|c| !taken.contains(c) && !chars.iter().enumerate().any(|(j, x)| j != i && x == c)).unwrap_or(chars[i]);
-                    }
-                }
+                let chars = resolve(&s.header, &s.cursor, &humans);
                 if let Some(&p1) = humans.first() {
                     self.card.character = CAST[chars[p1]].id.to_string();
                     self.card.save();

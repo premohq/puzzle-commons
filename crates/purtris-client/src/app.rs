@@ -574,7 +574,7 @@ impl App {
         Screen::Title
     }
 
-    fn title_backdrop(&mut self, t: f32) {
+    pub(crate) fn title_backdrop(&mut self, t: f32) {
         let _p = crate::prof::scope("title_bg");
         if self.maps.is_empty() {
             self.cv.clear(0xFF1A_2A55);
