@@ -1,0 +1,19 @@
+VRoid Studio sample avatars (anime characters in Puzzle Commons)
+by the VRoid Project / pixiv Inc.
+
+License: CC0 1.0 (public domain dedication).
+pixiv's own statement, for each model used:
+  https://vroid.pixiv.help/hc/en-us/articles/4402614652569  (base models, hair samples, beta AvatarSample_1-4: CC0)
+  https://vroid.pixiv.help/hc/en-us/articles/360013482714  (Sendagaya Shino: CC0)
+  https://vroid.pixiv.help/hc/en-us/articles/360014788554  (Sakurada Fumiriya: CC0)
+  https://vroid.pixiv.help/hc/en-us/articles/360012381793  (beta AvatarSample_1: CC0)
+Files downloaded from the OpenGameArt mirror (marked CC0):
+  https://opengameart.org/content/vroid-studio-cc0-models
+The VRM files' own metadata also allows modification, redistribution and commercial use
+without credit.
+
+"To the extent possible under law, pixiv Inc. has waived all copyright and related or
+neighboring rights to this model." Credit is not required; it is given here gladly.
+
+Puzzle Commons poses, recolors and toon-renders them with tools/blender/cast3d.py; the
+names, roles and story are this game's own.

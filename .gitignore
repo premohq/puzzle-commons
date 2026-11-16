@@ -1,0 +1,17 @@
+target/
+third_party/polyhaven/*/
+third_party/oga/
+dist/
+puzzle-commons-*.tar.gz
+puzzle-commons-*.zip
+third_party/vroid_cc0/zips/
+third_party/vroid_cc0/work/
+third_party/quaternius_cute_monsters/*.zip
+# large or re-downloadable sources (see README "Rebuilding the art")
+third_party/vroid_cc0/vrm/
+third_party/vroid_cc0/preview/
+third_party/quaternius_cute_monsters/*
+!third_party/quaternius_cute_monsters/LICENSE.txt
+# no longer used, and not GPL-compatible to redistribute (resale-restricted art)
+third_party/itch/
+assets/chars/

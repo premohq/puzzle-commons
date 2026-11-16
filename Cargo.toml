@@ -1,0 +1,17 @@
+[workspace]
+resolver = "2"
+members = ["crates/purtris-sim", "crates/purtris-bot", "crates/purtris-client", "crates/purtris-tools"]
+
+[workspace.package]
+version = "1.0.0"
+edition = "2021"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 4
+debug = false
+
+# Debug builds still optimize so the software renderer holds 60 fps while developing.
+[profile.dev]
+opt-level = 2

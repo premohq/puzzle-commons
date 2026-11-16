@@ -1,0 +1,27 @@
+[package]
+name = "purtris-client"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "puzzle-commons"
+path = "src/main.rs"
+
+[dependencies]
+purtris-sim = { path = "../purtris-sim" }
+purtris-bot = { path = "../purtris-bot" }
+# Thin OS layer only: opens the window, presents our software framebuffer, reports keys.
+minifb = { version = "0.27", default-features = false, features = ["x11"] }
+# the window handle minifb exposes (used to request true fullscreen on Linux)
+raw-window-handle = "0.6"
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[target.'cfg(not(target_os = "linux"))'.dependencies]
+gilrs = "0.11"
+
+[features]
+# Type-check the Windows/macOS FFI modules on any host (cargo check --features check_all).
+check_all = []
+

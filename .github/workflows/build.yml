@@ -1,0 +1,148 @@
+# Builds Puzzle Commons for Linux, Windows and macOS on every push and pull request.
+# Every asset is compiled into the binary, so each download is one self-contained program
+# plus its licenses. Pushing a tag like v0.1.0 also publishes the three builds as a release.
+name: build
+
+on:
+  push:
+    branches: ["**"]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  test:
+    name: Sim tests
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Build tools
+        run: cargo build --release -p purtris-tools
+      - name: Determinism and replay round trip
+        run: ./target/release/purtris-tools determinism
+      - name: Every panel puzzle is solvable
+        run: ./target/release/purtris-tools puzzles
+      - name: Sim speed budget
+        run: ./target/release/purtris-tools bench
+      - name: Type-check the Windows and macOS audio back ends on Linux
+        run: cargo check --release -p purtris-client --features check_all
+
+  build:
+    name: ${{ matrix.name }}
+    needs: test
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Linux x86_64
+            os: ubuntu-22.04 # older glibc, so the binary runs on more distros
+            dist: puzzle-commons-linux-x86_64
+          - name: Windows x86_64
+            os: windows-latest
+            dist: puzzle-commons-windows-x86_64
+          - name: macOS universal
+            os: macos-14
+            dist: puzzle-commons-macos-universal
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ startsWith(matrix.os, 'macos') && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build (Linux / Windows)
+        if: runner.os != 'macOS'
+        run: cargo build --release -p purtris-client
+
+      - name: Build (macOS, Apple silicon + Intel)
+        if: runner.os == 'macOS'
+        env:
+          MACOSX_DEPLOYMENT_TARGET: "11.0"
+        run: |
+          cargo build --release -p purtris-client --target aarch64-apple-darwin
+          cargo build --release -p purtris-client --target x86_64-apple-darwin
+
+      - name: Package
+        shell: bash
+        run: |
+          set -euo pipefail
+          D="dist/${{ matrix.dist }}"
+          mkdir -p "$D/licenses"
+          cp LICENSE README.md "$D/"
+          cp assets/fonts/LICENSE-*.txt assets/input/LICENSE-*.txt "$D/licenses/"
+          cp third_party/phosphor/LICENSE "$D/licenses/LICENSE-Phosphor-Icons.txt"
+          cp third_party/polyhaven/LICENSE.txt "$D/licenses/LICENSE-PolyHaven.txt"
+          cp third_party/vroid_cc0/LICENSE.txt "$D/licenses/LICENSE-VRoid-characters.txt"
+          case "${{ runner.os }}" in
+            Linux)
+              cp target/release/puzzle-commons "$D/"
+              chmod +x "$D/puzzle-commons"
+              tar -C dist -czf "${{ matrix.dist }}.tar.gz" "${{ matrix.dist }}"
+              ;;
+            Windows)
+              cp target/release/puzzle-commons.exe "$D/Puzzle Commons.exe"
+              (cd dist && 7z a -tzip "../${{ matrix.dist }}.zip" "${{ matrix.dist }}" > /dev/null)
+              ;;
+            macOS)
+              APP="$D/Puzzle Commons.app"
+              mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
+              lipo -create \
+                target/aarch64-apple-darwin/release/puzzle-commons \
+                target/x86_64-apple-darwin/release/puzzle-commons \
+                -output "$APP/Contents/MacOS/puzzle-commons"
+              VERSION=$(grep -m1 '^version' Cargo.toml | cut -d'"' -f2)
+              cat > "$APP/Contents/Info.plist" <<PLIST
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>CFBundleName</key><string>Puzzle Commons</string>
+            <key>CFBundleDisplayName</key><string>Puzzle Commons</string>
+            <key>CFBundleIdentifier</key><string>org.puzzlecommons.game</string>
+            <key>CFBundleExecutable</key><string>puzzle-commons</string>
+            <key>CFBundlePackageType</key><string>APPL</string>
+            <key>CFBundleShortVersionString</key><string>${VERSION}</string>
+            <key>CFBundleVersion</key><string>${VERSION}</string>
+            <key>LSMinimumSystemVersion</key><string>11.0</string>
+            <key>NSHighResolutionCapable</key><true/>
+            <key>LSApplicationCategoryType</key><string>public.app-category.puzzle-games</string>
+          </dict>
+          </plist>
+          PLIST
+              # ad-hoc signature: required to run at all on Apple silicon
+              codesign --force --deep --sign - "$APP"
+              (cd dist && ditto -c -k --keepParent "${{ matrix.dist }}" "../${{ matrix.dist }}.zip")
+              ;;
+          esac
+          ls -la dist "$D"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.dist }}
+          path: |
+            ${{ matrix.dist }}.tar.gz
+            ${{ matrix.dist }}.zip
+          if-no-files-found: error
+
+  release:
+    name: Publish release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: out
+          merge-multiple: true
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: out/*
+          generate_release_notes: true

@@ -1,0 +1,8 @@
+[package]
+name = "purtris-tools"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+purtris-sim = { path = "../purtris-sim" }
+purtris-bot = { path = "../purtris-bot" }
