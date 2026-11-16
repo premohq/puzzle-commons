@@ -18,6 +18,30 @@ impl Default for Monitor {
     }
 }
 
+/// A display mode the monitor offers.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Mode {
+    pub w: i32,
+    pub h: i32,
+    pub hz: f32,
+}
+
+/// Every mode the primary monitor offers (largest first). Empty when the system will not say.
+pub fn modes() -> Vec<Mode> {
+    #[cfg(target_os = "linux")]
+    let mut v = x11::modes().unwrap_or_default();
+    #[cfg(windows)]
+    let mut v = win::modes();
+    #[cfg(target_os = "macos")]
+    let mut v = mac::modes();
+    #[cfg(not(any(target_os = "linux", windows, target_os = "macos")))]
+    let mut v: Vec<Mode> = Vec::new();
+    v.retain(|m| m.w >= 640 && m.h >= 360);
+    v.sort_by(|a, b| (b.w, b.h).cmp(&(a.w, a.h)).then(b.hz.partial_cmp(&a.hz).unwrap_or(std::cmp::Ordering::Equal)));
+    v.dedup_by(|a, b| a.w == b.w && a.h == b.h && (a.hz - b.hz).abs() < 0.5);
+    v
+}
+
 /// Call once before any window exists (Windows: report real pixels, not DPI-scaled ones).
 pub fn init() {
     #[cfg(windows)]
@@ -134,6 +158,95 @@ mod x11 {
         possible: *mut c_ulong,
     }
 
+    /// XRROutputInfo
+    #[repr(C)]
+    struct OutputInfo {
+        timestamp: c_ulong,
+        crtc: c_ulong,
+        name: *mut c_char,
+        name_len: c_int,
+        mm_width: c_ulong,
+        mm_height: c_ulong,
+        connection: u16,
+        subpixel_order: u16,
+        ncrtc: c_int,
+        crtcs: *mut c_ulong,
+        nclone: c_int,
+        clones: *mut c_ulong,
+        nmode: c_int,
+        npreferred: c_int,
+        modes: *mut c_ulong,
+    }
+    type XRRGetOutputInfo = unsafe extern "C" fn(*mut c_void, *mut ScreenResources, c_ulong) -> *mut OutputInfo;
+    type XRRFreeOutputInfo = unsafe extern "C" fn(*mut OutputInfo);
+
+    fn mode_hz(md: &ModeInfo) -> f32 {
+        let t = md.h_total as f64 * md.v_total as f64;
+        if t > 0.0 {
+            (md.dot_clock as f64 / t) as f32
+        } else {
+            0.0
+        }
+    }
+
+    /// The modes of the output that shows the primary monitor (all modes if that fails).
+    pub fn modes() -> Option<Vec<super::Mode>> {
+        let m = primary()?;
+        let x11 = Lib::open(&[c"libX11.so.6", c"libX11.so"])?;
+        let xr = Lib::open(&[c"libXrandr.so.2", c"libXrandr.so"])?;
+        unsafe {
+            let open: XOpenDisplay = x11.get(c"XOpenDisplay")?;
+            let close: XCloseDisplay = x11.get(c"XCloseDisplay")?;
+            let root_of: XDefaultRootWindow = x11.get(c"XDefaultRootWindow")?;
+            let get_res: XRRGetScreenResourcesCurrent = xr.get(c"XRRGetScreenResourcesCurrent")?;
+            let free_res: XRRFreeScreenResources = xr.get(c"XRRFreeScreenResources")?;
+            let get_crtc: XRRGetCrtcInfo = xr.get(c"XRRGetCrtcInfo")?;
+            let free_crtc: XRRFreeCrtcInfo = xr.get(c"XRRFreeCrtcInfo")?;
+            let get_out: XRRGetOutputInfo = xr.get(c"XRRGetOutputInfo")?;
+            let free_out: XRRFreeOutputInfo = xr.get(c"XRRFreeOutputInfo")?;
+            let dpy = open(std::ptr::null());
+            if dpy.is_null() {
+                return None;
+            }
+            let res = get_res(dpy, root_of(dpy));
+            if res.is_null() {
+                close(dpy);
+                return None;
+            }
+            let r = &*res;
+            let all = std::slice::from_raw_parts(r.modes, r.nmode.max(0) as usize);
+            let crtcs = std::slice::from_raw_parts(r.crtcs, r.ncrtc.max(0) as usize);
+            let mut ids: Vec<c_ulong> = Vec::new();
+            for &c in crtcs {
+                let ci = get_crtc(dpy, res, c);
+                if ci.is_null() {
+                    continue;
+                }
+                let info = &*ci;
+                if info.mode != 0 && info.x == m.x && info.y == m.y && info.noutput > 0 {
+                    let out = *info.outputs;
+                    let oi = get_out(dpy, res, out);
+                    if !oi.is_null() {
+                        ids.extend_from_slice(std::slice::from_raw_parts((*oi).modes, (*oi).nmode.max(0) as usize));
+                        free_out(oi);
+                    }
+                }
+                free_crtc(ci);
+                if !ids.is_empty() {
+                    break;
+                }
+            }
+            let v: Vec<super::Mode> = all
+                .iter()
+                .filter(|md| ids.is_empty() || ids.contains(&md.id))
+                .map(|md| super::Mode { w: md.width as i32, h: md.height as i32, hz: mode_hz(md) })
+                .collect();
+            free_res(res);
+            close(dpy);
+            Some(v)
+        }
+    }
+
     struct Lib(*mut c_void);
     impl Lib {
         fn open(names: &[&CStr]) -> Option<Lib> {
@@ -216,9 +329,9 @@ mod x11 {
             let info = &*ci;
             if info.mode != 0 && info.x == m.x && info.y == m.y {
                 if let Some(md) = modes.iter().find(|md| md.id == info.mode) {
-                    let t = md.h_total as f64 * md.v_total as f64;
-                    if t > 0.0 {
-                        hz = Some((md.dot_clock as f64 / t) as f32);
+                    let f = mode_hz(md);
+                    if f > 0.0 {
+                        hz = Some(f);
                     }
                 }
             }
@@ -284,6 +397,54 @@ mod win {
     extern "system" {
         fn GetDeviceCaps(hdc: *mut c_void, index: i32) -> i32;
     }
+    /// DEVMODEW (display variant), 220 bytes
+    #[repr(C)]
+    struct DevMode {
+        device_name: [u16; 32],
+        spec_version: u16,
+        driver_version: u16,
+        size: u16,
+        driver_extra: u16,
+        fields: u32,
+        position: [i32; 2],
+        orientation: u32,
+        fixed_output: u32,
+        color: i16,
+        duplex: i16,
+        y_resolution: i16,
+        tt_option: i16,
+        collate: i16,
+        form_name: [u16; 32],
+        log_pixels: u16,
+        bits_per_pel: u32,
+        pels_width: u32,
+        pels_height: u32,
+        display_flags: u32,
+        display_frequency: u32,
+        icm: [u32; 8],
+    }
+    #[link(name = "user32")]
+    extern "system" {
+        fn EnumDisplaySettingsW(device: *const u16, mode: u32, dm: *mut DevMode) -> i32;
+    }
+    pub fn modes() -> Vec<super::Mode> {
+        let mut v = Vec::new();
+        unsafe {
+            let mut dm: DevMode = std::mem::zeroed();
+            dm.size = std::mem::size_of::<DevMode>() as u16;
+            let mut i = 0;
+            while EnumDisplaySettingsW(std::ptr::null(), i, &mut dm) != 0 {
+                if dm.bits_per_pel >= 24 {
+                    v.push(super::Mode { w: dm.pels_width as i32, h: dm.pels_height as i32, hz: dm.display_frequency as f32 });
+                }
+                i += 1;
+                if i > 4000 {
+                    break;
+                }
+            }
+        }
+        v
+    }
     pub fn init() {
         unsafe {
             SetProcessDPIAware();
@@ -322,6 +483,31 @@ mod mac {
         fn CGDisplayCopyDisplayMode(d: u32) -> *mut c_void;
         fn CGDisplayModeGetRefreshRate(m: *mut c_void) -> f64;
         fn CGDisplayModeRelease(m: *mut c_void);
+        fn CGDisplayCopyAllDisplayModes(d: u32, options: *const c_void) -> *const c_void;
+        fn CGDisplayModeGetWidth(m: *const c_void) -> usize;
+        fn CGDisplayModeGetHeight(m: *const c_void) -> usize;
+    }
+    #[link(name = "CoreFoundation", kind = "framework")]
+    extern "C" {
+        fn CFArrayGetCount(a: *const c_void) -> isize;
+        fn CFArrayGetValueAtIndex(a: *const c_void, i: isize) -> *const c_void;
+        fn CFRelease(a: *const c_void);
+    }
+    pub fn modes() -> Vec<super::Mode> {
+        let mut v = Vec::new();
+        unsafe {
+            let arr = CGDisplayCopyAllDisplayModes(CGMainDisplayID(), std::ptr::null());
+            if arr.is_null() {
+                return v;
+            }
+            for i in 0..CFArrayGetCount(arr) {
+                let m = CFArrayGetValueAtIndex(arr, i);
+                let hz = CGDisplayModeGetRefreshRate(m as *mut c_void) as f32;
+                v.push(super::Mode { w: CGDisplayModeGetWidth(m) as i32, h: CGDisplayModeGetHeight(m) as i32, hz: if hz > 0.0 { hz } else { 60.0 } });
+            }
+            CFRelease(arr);
+        }
+        v
     }
     pub fn primary() -> Monitor {
         unsafe {

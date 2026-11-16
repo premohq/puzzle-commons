@@ -8,6 +8,36 @@ use crate::font::Weight;
 use crate::gfx::Canvas;
 use crate::input::Nav;
 use crate::save::{WindowMode, FPS_CAPS, RENDER_WIDTHS, WINDOW_SIZES};
+
+/// Resolution choices: native, then every size the monitor offers (fallback: presets).
+fn res_choices(modes: &[crate::display::Mode]) -> Vec<(u32, u32)> {
+    let mut v = vec![(0u32, 0u32)];
+    for m in modes {
+        let r = (m.w as u32, m.h as u32);
+        if !v.contains(&r) {
+            v.push(r);
+        }
+    }
+    if v.len() == 1 {
+        v.extend(RENDER_WIDTHS.iter().filter(|&&w| w > 0).map(|&w| (w, w * 9 / 16)));
+    }
+    v
+}
+
+/// Refresh-rate choices: the rates the monitor offers, then unlimited (fallback: presets).
+fn hz_choices(modes: &[crate::display::Mode]) -> Vec<u32> {
+    let mut v: Vec<u32> = modes.iter().map(|m| m.hz.round() as u32).filter(|&h| h >= 24).collect();
+    // plus the usual rates up to the monitor's fastest (some systems only report the current one)
+    let top = v.iter().copied().max().unwrap_or(60);
+    v.extend([30u32, 60, 75, 90, 100, 120, 144, 165, 240].iter().copied().filter(|&r| r <= top));
+    v.sort_unstable_by(|a, b| b.cmp(a));
+    v.dedup();
+    if v.is_empty() {
+        v = FPS_CAPS.iter().copied().filter(|&c| c > 1).collect();
+    }
+    v.push(0);
+    v
+}
 use crate::theme::{look, Preset, ThemeId};
 use crate::ui::{self, cycle, ListState, GLASS, GLASS_A};
 use minifb::Key;
@@ -24,6 +54,7 @@ pub enum Id {
     Theme,
     Preset,
     Characters,
+    BesideVersus,
     Faces,
     Bench,
     Music,
@@ -64,14 +95,15 @@ const TABS: [&str; 6] = ["Display", "Graphics", "Audio", "Gameplay", "Controls",
 const DEFS: &[Def] = &[
     Def { tab: 0, id: Id::WindowMode, kind: Kind::Choice, label: "Window mode", desc: "Fullscreen covers the whole monitor (borderless, instant to switch). Windowed opens a normal window you can move and resize." },
     Def { tab: 0, id: Id::WindowSize, kind: Kind::Choice, label: "Window size", desc: "The size of the window in windowed mode. Sizes larger than this monitor are skipped." },
-    Def { tab: 0, id: Id::RenderRes, kind: Kind::Choice, label: "Render resolution", desc: "Native draws every pixel of the window. A fixed resolution is drawn at that size and scaled to the window; higher than the window gives extra-smooth edges, lower is lighter on slow machines." },
+    Def { tab: 0, id: Id::RenderRes, kind: Kind::Choice, label: "Resolution", desc: "The resolution the game draws at, from the sizes your monitor supports. Native uses every pixel of the window. A lower one is lighter on slow machines and is scaled up; a higher one gives extra-smooth edges. The game is 16:9, so other shapes get bars." },
     Def { tab: 0, id: Id::Scaling, kind: Kind::Choice, label: "Scaling filter", desc: "How a fixed render resolution is fitted to the window. Smooth blends pixels; Sharp keeps hard pixel edges." },
-    Def { tab: 0, id: Id::FpsCap, kind: Kind::Choice, label: "Frame rate limit", desc: "Match display paces frames to your monitor's refresh rate for the smoothest motion. The match itself always runs at 60 ticks a second." },
+    Def { tab: 0, id: Id::FpsCap, kind: Kind::Choice, label: "Refresh rate", desc: "How many frames a second the game shows, from the refresh rates your monitor supports. Pick your monitor's rate for the smoothest motion. The match itself always runs at 60 ticks a second." },
     Def { tab: 0, id: Id::ShowFps, kind: Kind::Switch, label: "Show frame rate", desc: "A small counter in the bottom-left corner with frames per second and the render size." },
     Def { tab: 0, id: Id::MonitorInfo, kind: Kind::Info, label: "Monitor", desc: "The primary monitor as the system reports it." },
     Def { tab: 1, id: Id::Theme, kind: Kind::Choice, label: "Theme", desc: "Voyage is the full look with the world maps. Tournament is flat and plain for streams and tournaments. Phosphor is a green CRT look." },
     Def { tab: 1, id: Id::Preset, kind: Kind::Choice, label: "Quality", desc: "Voyage is everything on. Balanced trims effects. Potato is for very slow machines." },
     Def { tab: 1, id: Id::Characters, kind: Kind::Switch, label: "Show characters", desc: "The cast on menus, the story map and results." },
+    Def { tab: 1, id: Id::BesideVersus, kind: Kind::Switch, label: "Characters beside boards in versus", desc: "In the story the characters always stand beside the boards and react to the match. In versus and solo it's your choice." },
     Def { tab: 1, id: Id::Faces, kind: Kind::Switch, label: "Faces on pieces", desc: "Little faces on the pieces in two-player matches." },
     Def { tab: 1, id: Id::Bench, kind: Kind::Button, label: "Measure this machine again", desc: "Times a few frames and picks Voyage or Potato quality for you." },
     Def { tab: 2, id: Id::Music, kind: Kind::Slider, label: "Music", desc: "Music volume." },
@@ -93,13 +125,6 @@ const DEFS: &[Def] = &[
 /// Display settings that a keep/revert prompt protects.
 pub type DisplaySnap = (WindowMode, (u32, u32), u32);
 
-fn res_name(w: u32) -> String {
-    if w == 0 {
-        "Native".into()
-    } else {
-        format!("{} x {}", w, w * 9 / 16)
-    }
-}
 
 impl App {
     fn snap(&self) -> DisplaySnap {
@@ -112,18 +137,26 @@ impl App {
         match id {
             Id::WindowMode => s(if st.window_mode == WindowMode::Fullscreen { "Fullscreen" } else { "Windowed" }),
             Id::WindowSize => s(&format!("{} x {}", st.window_size.0, st.window_size.1)),
-            Id::RenderRes => s(&res_name(st.render_w)),
+            Id::RenderRes => {
+                if st.render_w == 0 {
+                    s("Native")
+                } else {
+                    let h = res_choices(&self.modes).iter().find(|r| r.0 == st.render_w).map(|r| r.1).unwrap_or(st.render_w * 9 / 16);
+                    s(&format!("{} x {}", st.render_w, h))
+                }
+            }
             Id::Scaling => s(if st.smooth { "Smooth" } else { "Sharp" }),
             Id::FpsCap => match st.fps_cap {
-                1 => s(&if self.monitor.hz > 20.0 { format!("Match display ({:.0} Hz)", self.monitor.hz) } else { "Match display".into() }),
+                1 => s(&if self.monitor.hz > 20.0 { format!("{:.0} Hz (this monitor)", self.monitor.hz) } else { "Match display".into() }),
                 0 => s("Unlimited"),
-                n => s(&format!("{} fps", n)),
+                n => s(&format!("{} Hz", n)),
             },
             Id::ShowFps => (String::new(), st.show_fps, 0, 0),
             Id::MonitorInfo => s(&format!("{} x {}{}", self.monitor.w, self.monitor.h, if self.monitor.hz > 0.0 { format!("  at {:.0} Hz", self.monitor.hz) } else { String::new() })),
             Id::Theme => s(st.theme.name()),
             Id::Preset => s(st.preset.name()),
             Id::Characters => (String::new(), st.characters, 0, 0),
+            Id::BesideVersus => (String::new(), st.chars_versus, 0, 0),
             Id::Faces => (String::new(), st.decorations, 0, 0),
             Id::Bench => s(""),
             Id::Music => (format!("{}", st.music_vol * 10), false, st.music_vol as i32, 10),
@@ -157,13 +190,27 @@ impl App {
                 let fits: Vec<(u32, u32)> = WINDOW_SIZES.iter().copied().filter(|&(w, h)| w as i32 <= self.monitor.w && h as i32 + 60 <= self.monitor.h || w == 1280).collect();
                 st.window_size = cycle(&fits, if fits.contains(&st.window_size) { st.window_size } else { fits[0] }, d);
             }
-            Id::RenderRes => st.render_w = cycle(&RENDER_WIDTHS, st.render_w, d),
+            Id::RenderRes => {
+                let widths: Vec<u32> = res_choices(&self.modes).iter().map(|r| r.0).collect();
+                st.render_w = cycle(&widths, if widths.contains(&st.render_w) { st.render_w } else { 0 }, d);
+            }
             Id::Scaling => st.smooth = !st.smooth,
-            Id::FpsCap => st.fps_cap = cycle(&FPS_CAPS, st.fps_cap, d),
+            Id::FpsCap => {
+                // "match display" shows as the monitor's own rate in the list
+                let mut opts = hz_choices(&self.modes);
+                let own = self.monitor.hz.round() as u32;
+                let cur = if st.fps_cap == 1 { own } else { st.fps_cap };
+                if !opts.contains(&cur) {
+                    opts.insert(0, cur);
+                }
+                let next = cycle(&opts, cur, d);
+                st.fps_cap = if next == own && own > 1 { 1 } else { next };
+            }
             Id::ShowFps => st.show_fps = !st.show_fps,
             Id::Theme => st.theme = cycle(&ThemeId::ALL, st.theme, d),
             Id::Preset => st.preset = cycle(&Preset::ALL, st.preset, d),
             Id::Characters => st.characters = !st.characters,
+            Id::BesideVersus => st.chars_versus = !st.chars_versus,
             Id::Faces => st.decorations = !st.decorations,
             Id::Music => st.music_vol = step(st.music_vol, d, 0, 10),
             Id::Effects => st.sfx_vol = step(st.sfx_vol, d, 0, 10),

@@ -254,6 +254,8 @@ pub struct App {
     pub dt: f32,
     /// the primary monitor (size, refresh) for display settings
     pub monitor: crate::display::Monitor,
+    /// the modes the monitor offers (resolution and refresh-rate choices)
+    pub modes: Vec<crate::display::Mode>,
     /// measured frames per second (smoothed), for the optional counter
     pub fps: f32,
     /// scripted input for live tests (PC_SCRIPT)
@@ -306,6 +308,7 @@ impl App {
             last_input_t: 0.0,
             dt: 1.0 / 60.0,
             monitor: crate::display::Monitor::default(),
+            modes: Vec::new(),
             fps: 0.0,
             script: crate::script::Script::from_env(),
             display_undo: None,
@@ -1154,8 +1157,13 @@ impl App {
         dev[0] = Some(self.default_dev());
         let play = self.start(h, dev, Origin::Story { world, node, diff, chosen: p }, false);
         const BOSS: [&str; 5] = ["w0_boss", "w1_boss", "w2_boss", "w3_boss", "w4_boss"];
+        const MID: [&str; 5] = ["w0_mid", "w1_mid", "w2_mid", "w3_mid", "w4_mid"];
         if node == 5 && !self.scene_seen(BOSS[world.min(4)]) {
             return self.play_scene(BOSS[world.min(4)], play);
+        }
+        // halfway through each world the story takes a quieter turn
+        if node == 2 && !self.scene_seen(MID[world.min(4)]) {
+            return self.play_scene(MID[world.min(4)], play);
         }
         play
     }
@@ -1924,11 +1932,21 @@ impl App {
         let sx = (shake * ((self.t * 50.0).sin())) as i32;
         let ah = if g.training { 634 } else { 668 };
         let active: Vec<usize> = (0..6).filter(|&i| g.m.seats[i].board.is_some()).collect();
-        // 1 vs 1 and solo: the characters stand beside the boards, reacting to the match
-        let flank = self.st.characters && self.st.theme != ThemeId::Tournament && active.len() <= 2;
-        let area = if flank { (250 + sx, 44, 780, ah) } else { (20 + sx, 44, 1240, ah) };
+        // the characters stand beside the boards, reacting to the match: always in the story,
+        // optional in versus and solo; with more than two seats, you and the lead rival
+        let story = matches!(g.origin, Origin::Story { .. });
+        let flank = self.st.characters && self.st.theme != ThemeId::Tournament && ((story && active.len() <= 4) || (self.st.chars_versus && active.len() <= 2));
+        let crowd = active.len() > 2;
+        let area = if !flank {
+            (20 + sx, 44, 1240, ah)
+        } else if crowd {
+            (205 + sx, 44, 870, ah)
+        } else {
+            (250 + sx, 44, 780, ah)
+        };
         if flank {
-            for (k, &i) in active.iter().enumerate() {
+            let shown: Vec<usize> = if crowd { vec![active[0], *active.iter().find(|&&i| !g.humans[i]).unwrap_or(&active[1])] } else { active.clone() };
+            for (k, &i) in shown.iter().enumerate() {
                 let seat = &g.m.seats[i];
                 let member = &crate::cast::CAST[g.chars[i].min(crate::cast::CAST.len() - 1)];
                 let danger = seat.board.as_ref().map(|b| b.danger()).unwrap_or(false);
@@ -1946,9 +1964,9 @@ impl App {
                     "smile"
                 };
                 let right = k == 1 || (active.len() == 1 && false);
-                let cx = if right { 1150 } else { 130 };
+                let cx = if right { if crowd { 1180 } else { 1150 } } else if crowd { 100 } else { 130 };
                 let bob = if self.st.reduce_motion { 0 } else { ((self.t * 1.6 + k as f32).sin() * 3.0) as i32 };
-                crate::assets::draw_char_ex(&mut self.cv, member.id, expr, cx, 712 + bob, 600, 255, right);
+                crate::assets::draw_char_ex(&mut self.cv, member.id, expr, cx, 712 + bob, if crowd { 520 } else { 600 }, 255, right);
                 let nw = Canvas::text_wb(member.name, 2, crate::font::Weight::Black) + 36;
                 self.cv.round_grad(cx - nw / 2, 640, nw, 36, 18, crate::gfx::lighten(member.color, 40), member.color, 255);
                 self.cv.text_weight(cx - nw / 2 + 18, 646, member.name, 2, 0xFF16_1028, 255, crate::font::Weight::Black);

@@ -104,13 +104,76 @@ def rotate_bone(arm, bname, axis, deg):
 
 # poses: (humanoid bone, axis, degrees) in armature space. Character faces -Y; +X is their left.
 POSES = {
-    "stand": [("leftUpperArm", "Y", 68), ("rightUpperArm", "Y", -68), ("leftLowerArm", "Z", 12), ("rightLowerArm", "Z", -12)],
-    "cheer": [("leftUpperArm", "Y", -55), ("rightUpperArm", "Y", 55), ("leftLowerArm", "Y", -30), ("rightLowerArm", "Y", 30), ("head", "X", -6)],
-    "sad": [("leftUpperArm", "Y", 74), ("rightUpperArm", "Y", -74), ("leftLowerArm", "Z", 40), ("rightLowerArm", "Z", -40), ("head", "X", 14), ("spine", "X", 5)],
+    "stand": [("leftUpperArm", "Y", 70), ("rightUpperArm", "Y", -70), ("leftUpperArm", "X", -6), ("rightUpperArm", "X", -6), ("leftLowerArm", "Z", 16), ("rightLowerArm", "Z", -16), ("leftHand", "Z", 40), ("rightHand", "Z", -40)],
+    "cheer": [("leftUpperArm", "Y", -50), ("rightUpperArm", "Y", 50), ("leftLowerArm", "Y", -26), ("rightLowerArm", "Y", 26), ("head", "X", -6)],
+    "sad": [("leftUpperArm", "Y", 76), ("rightUpperArm", "Y", -76), ("leftUpperArm", "X", -14), ("rightUpperArm", "X", -14), ("leftLowerArm", "Z", 34), ("rightLowerArm", "Z", -34), ("head", "X", 14), ("spine", "X", 5)],
     "angry": [("leftUpperArm", "Y", 74), ("rightUpperArm", "Y", -74), ("leftUpperArm", "X", -12), ("rightUpperArm", "X", -12), ("head", "X", 7), ("spine", "X", 4)],
     "think": [("leftUpperArm", "Y", 68), ("rightUpperArm", "Y", -40), ("rightUpperArm", "Z", 30), ("rightLowerArm", "Z", -110), ("head", "Z", -8), ("head", "Y", 6)],
     "wave": [("leftUpperArm", "Y", 68), ("rightUpperArm", "Y", -10), ("rightLowerArm", "Y", 75), ("head", "Y", -5)],
 }
+
+
+def rotate_bone_axis(arm, bname, axis, deg):
+    """Rotate a pose bone about its head around an armature-space axis vector."""
+    if bname not in arm.pose.bones or axis.length < 1e-6:
+        return
+    pb = arm.pose.bones[bname]
+    bpy.context.view_layer.update()
+    head = pb.head.copy()
+    R = Matrix.Rotation(math.radians(deg), 4, axis.normalized())
+    pb.matrix = Matrix.Translation(head) @ R @ Matrix.Translation(-head) @ pb.matrix
+    bpy.context.view_layer.update()
+
+
+# relaxed hand: degrees of curl per segment (proximal, intermediate, distal)
+FINGER_CURL = {"Index": (26, 40, 26), "Middle": (32, 46, 28), "Ring": (36, 50, 30), "Little": (42, 54, 32), "Thumb": (12, 20, 14)}
+
+
+def relax_hands(arm, bones, fist=0.0):
+    """Curl every finger toward the palm (the T-pose leaves them straight and spread, which
+    reads as thin claws once the arms come down). `fist` adds extra curl (0..1)."""
+    for side in ("left", "right"):
+        for finger, curls in FINGER_CURL.items():
+            for seg, deg in zip(("Proximal", "Intermediate", "Distal"), curls):
+                hb = side + finger + seg
+                if hb not in bones or bones[hb] not in arm.pose.bones:
+                    continue
+                pb = arm.pose.bones[bones[hb]]
+                d = (pb.tail - pb.head)
+                if d.length < 1e-6:
+                    continue
+                d = d.normalized()
+                if finger == "Thumb":
+                    # thumbs fold in across the palm
+                    axis = d.cross(Vector((0, 0, 1)))
+                else:
+                    # fingers bend toward the palm (down, in the T-pose)
+                    axis = d.cross(Vector((0, 0, -1)))
+                rotate_bone_axis(arm, bones[hb], axis, deg * (1.0 + 1.6 * fist))
+        # close the spread a little: fingers drift toward the middle finger
+        for finger, ang in (("Index", 4), ("Ring", -4), ("Little", -8)):
+            hb = side + finger + "Proximal"
+            if hb in bones and bones[hb] in arm.pose.bones:
+                rotate_bone_axis(arm, bones[hb], Vector((0, 0, 1)), ang if side == "left" else -ang)
+
+
+def posed_bounds(meshes):
+    """World bounds of the meshes as deformed by the current pose (not the rest pose)."""
+    dg = bpy.context.evaluated_depsgraph_get()
+    lo = Vector((1e9, 1e9, 1e9))
+    hi = Vector((-1e9, -1e9, -1e9))
+    for o in meshes:
+        if o.type != "MESH" or len(o.data.vertices) < 200 or o.name.lower().startswith("icosphere"):
+            continue
+        eo = o.evaluated_get(dg)
+        me = eo.to_mesh()
+        mw = eo.matrix_world
+        for v in me.vertices:
+            p = mw @ v.co
+            lo = Vector((min(lo.x, p.x), min(lo.y, p.y), min(lo.z, p.z)))
+            hi = Vector((max(hi.x, p.x), max(hi.y, p.y), max(hi.z, p.z)))
+        eo.to_mesh_clear()
+    return lo, hi
 
 
 def pose(arm, bones, name):
@@ -248,6 +311,24 @@ def frame_camera(sc, objs, mode="full", w=512, h=768, front=1.0, yaw=0.0):
     cam.rotation_euler = (math.radians(90), 0, math.atan2(dx, -dy))
     sc.collection.objects.link(cam)
     sc.camera = cam
+    return cam
+
+
+def frame_bounds(sc, lo, hi, w, h, front=1.0, yaw=0.0):
+    """Orthographic full-body camera fitted to world bounds (height-limited, small margin)."""
+    cam_d = bpy.data.cameras.new("camf")
+    cam_d.type = "ORTHO"
+    hgt = hi.z - lo.z
+    wid = max(hi.x - lo.x, hi.y - lo.y)
+    # fit height, or width if the pose is wider than the picture's shape
+    cam_d.ortho_scale = max(hgt * 1.04, wid * 1.04 * h / w)
+    cx, cy, cz = (lo.x + hi.x) / 2, (lo.y + hi.y) / 2, (lo.z + hi.z) / 2
+    cam = bpy.data.objects.new("camf", cam_d)
+    a = math.radians(yaw)
+    dx, dy = math.sin(a) * front, front * math.cos(a)
+    cam.location = (cx + dx * 10, cy + dy * 10, cz)
+    cam.rotation_euler = (math.radians(90), 0, math.atan2(dx, -dy))
+    sc.collection.objects.link(cam)
     return cam
 
 
@@ -394,10 +475,23 @@ def cast():
         bones = bone_map(vrm, gltf)
         toon_meshes(meshes, tints=tints)
         outline(meshes)
-        full = frame_camera(sc, meshes, "full", 448, 960, front=1.0, yaw=14)
+        # one framing for all eight poses (so sizes match between expressions), measured on
+        # the posed meshes so raised hands stay inside the picture
+        lo = Vector((1e9, 1e9, 1e9))
+        hi = Vector((-1e9, -1e9, -1e9))
+        for ex, (weights, pz) in EXPRS.items():
+            reset_pose(arm)
+            relax_hands(arm, bones, 0.6 if pz == "angry" else 0.0)
+            pose(arm, bones, pz)
+            a, b = posed_bounds(meshes)
+            lo = Vector((min(lo.x, a.x), min(lo.y, a.y), min(lo.z, a.z)))
+            hi = Vector((max(hi.x, b.x), max(hi.y, b.y), max(hi.z, b.z)))
+        full = frame_bounds(sc, lo, hi, 448, 960, front=1.0, yaw=14)
+        reset_pose(arm)
         bust = frame_camera(sc, meshes, "bust", 640, 640, front=1.0, yaw=10)
         for ex, (weights, pz) in EXPRS.items():
             reset_pose(arm)
+            relax_hands(arm, bones, 0.6 if pz == "angry" else 0.0)
             pose(arm, bones, pz)
             set_expression(vrm, gltf, meshes, weights)
             sc.camera = full

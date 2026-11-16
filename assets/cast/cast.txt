@@ -9,13 +9,3 @@ human sora avatarsample_d_0
 human ren sakurada_fumiriya
 human taro base_male
 human emi base_female
-creature boo Ghost
-creature pip Bat
-creature bumble Bee
-creature pinch Crab
-creature morel Mushroom
-creature ember YellowDragon
-creature spike Cactus
-creature waddle Penguin
-creature zib Alien
-creature squish Cthulhu

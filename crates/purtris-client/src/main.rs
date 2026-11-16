@@ -58,6 +58,14 @@ fn main() {
         png::write(&args[3], img.w as usize, img.h as usize, &flat).expect("write");
         return;
     }
+    if args.get(1).map(|a| a == "--modes").unwrap_or(false) {
+        let m = display::primary();
+        println!("primary monitor: {}x{} at ({}, {}), {:.2} Hz", m.w, m.h, m.x, m.y, m.hz);
+        for md in display::modes() {
+            println!("  {}x{} @ {:.2} Hz", md.w, md.h, md.hz);
+        }
+        return;
+    }
     if args.get(1).map(|a| a == "--bench").unwrap_or(false) {
         for w in [1280, 1920, 2560] {
             shots::bench(w);
@@ -71,6 +79,7 @@ fn main() {
     let input = input::Input::new(None);
     let mut app = app::App::new(input, synth, audio_ok);
     app.monitor = monitor;
+    app.modes = display::modes();
     let mut screen = match Screen::open(&app.st, monitor) {
         Ok(s) => s,
         Err(e) => {
@@ -132,6 +141,8 @@ fn main() {
                     60.0
                 }
             }
+            // the exact rate when it is the monitor's own (143.88, not 144)
+            n if (n as f32 - monitor.hz).abs() < 0.6 => monitor.hz,
             n => n as f32,
         };
         if hz > 0.0 {

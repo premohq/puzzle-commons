@@ -67,6 +67,8 @@ pub struct Settings {
     pub colorblind: bool,
     pub decorations: bool,
     pub characters: bool,
+    /// show the characters beside the boards in versus (always on in the story)
+    pub chars_versus: bool,
     pub reduce_motion: bool,
     pub shake: bool,
     pub music_vol: u32,
@@ -94,6 +96,7 @@ impl Default for Settings {
             colorblind: true,
             decorations: false,
             characters: true,
+            chars_versus: true,
             reduce_motion: false,
             shake: false,
             music_vol: 6,
@@ -133,6 +136,7 @@ impl Settings {
         s.colorblind = b("colorblind", true);
         s.decorations = b("decorations2", false);
         s.characters = b("characters", true);
+        s.chars_versus = b("chars_versus", true);
         s.reduce_motion = b("reduce_motion", false);
         s.shake = b("shake", false);
         s.music_vol = n("music_vol", 6).min(10);
@@ -149,13 +153,15 @@ impl Settings {
                 s.window_size = (w, h);
             }
         }
+        // any width the monitor offered (or a preset); 0 = native
         s.render_w = n("render_w", 0);
-        if !RENDER_WIDTHS.contains(&s.render_w) {
+        if s.render_w != 0 && !(320..=7680).contains(&s.render_w) {
             s.render_w = 0;
         }
         s.smooth = b("smooth", true);
+        // 0 unlimited, 1 match display, otherwise a refresh rate in Hz
         s.fps_cap = n("fps_cap", 1);
-        if !FPS_CAPS.contains(&s.fps_cap) {
+        if s.fps_cap > 1 && !(24..=500).contains(&s.fps_cap) {
             s.fps_cap = 1;
         }
         s.show_fps = b("show_fps", false);
@@ -190,6 +196,7 @@ impl Settings {
         put("colorblind", (self.colorblind as u8).to_string());
         put("decorations2", (self.decorations as u8).to_string());
         put("characters", (self.characters as u8).to_string());
+        put("chars_versus", (self.chars_versus as u8).to_string());
         put("reduce_motion", (self.reduce_motion as u8).to_string());
         put("shake", (self.shake as u8).to_string());
         put("music_vol", self.music_vol.to_string());
