@@ -1128,10 +1128,23 @@ def passes():
         slots = pass_materials(meshes, tints, gltf)
         lo = Vector((1e9, 1e9, 1e9))
         hi = Vector((-1e9, -1e9, -1e9))
-        for ex, (weights, pz) in EXPRS.items():
+        libs = {}
+
+        def put_pose(pz):
+            # a UAL (lib, action, frame) tuple is retargeted; a name is one of our hand poses
             reset_pose(arm)
-            relax_hands(arm, bones, 0.6 if pz == "angry" else 0.0)
-            pose(arm, bones, pz)
+            if isinstance(pz, tuple):
+                if pz[0] not in libs:
+                    src_arm, acts = import_ual(pz[0])
+                    libs[pz[0]] = (Retarget(arm, bones, pz[0], src_arm, acts), acts)
+                r, acts = libs[pz[0]]
+                r.apply(acts[pz[1]], pz[2])
+            else:
+                relax_hands(arm, bones, 0.6 if pz == "angry" else 0.0)
+                pose(arm, bones, pz)
+
+        for ex, (weights, pz) in EXPRS.items():
+            put_pose(pz)
             a, b = posed_bounds(meshes)
             lo = Vector((min(lo.x, a.x), min(lo.y, a.y), min(lo.z, a.z)))
             hi = Vector((max(hi.x, b.x), max(hi.y, b.y), max(hi.z, b.z)))
@@ -1141,9 +1154,7 @@ def passes():
         exprs = [e for e in EXPRS if not EXPR_ONLY or e in EXPR_ONLY]
         for ex in exprs:
             weights, pz = EXPRS[ex]
-            reset_pose(arm)
-            relax_hands(arm, bones, 0.6 if pz == "angry" else 0.0)
-            pose(arm, bones, pz)
+            put_pose(pz)
             set_expression(vrm, gltf, meshes, weights)
             for which, suffix in (("albedo", ""), ("data", "_n")):
                 use_pass(sc, slots, which)
