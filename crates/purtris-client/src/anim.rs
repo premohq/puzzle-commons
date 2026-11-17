@@ -599,6 +599,8 @@ struct Actor {
     /// frames received for the current clip (frame, lit)
     have: Vec<(u16, Arc<Lit>)>,
     shown: Option<Arc<Lit>>,
+    /// the next frame, blended over `shown` by how far the clip is between the two
+    next: Option<(Arc<Lit>, f32)>,
     /// crossfade from the previous clip's last frame
     fade: Option<(Arc<Lit>, f32)>,
     pending: Option<(usize, u16, (u64, bool, u8))>,
@@ -633,6 +635,7 @@ impl Actor {
             oneshot: false,
             have: Vec::new(),
             shown: None,
+            next: None,
             fade: None,
             pending: None,
             key: (0, false, 0),
@@ -648,13 +651,19 @@ impl Actor {
         self.pca.and_then(|p| p.clips.get(self.clip))
     }
 
-    fn frame_at(&self) -> u16 {
-        let Some(c) = self.info() else { return 0 };
+    /// The frame showing now, the one after it, and how far between them (0..1): clips are 15
+    /// frames a second, so the two are blended for motion that stays fluid at any refresh rate.
+    fn frame_pos(&self) -> (u16, u16, f32) {
+        let Some(c) = self.info() else { return (0, 0, 0.0) };
         let n = c.frames.max(1) as f32;
         if c.looped {
-            ((self.t / c.secs.max(1e-3)) * n).floor().rem_euclid(n) as u16
+            let pos = ((self.t / c.secs.max(1e-3)) * n).rem_euclid(n);
+            let f = (pos.floor() as u16).min(c.frames.saturating_sub(1));
+            (f, (f + 1) % c.frames.max(1), pos - pos.floor())
         } else {
-            (((self.t / c.secs.max(1e-3)) * (n - 1.0)).round().clamp(0.0, n - 1.0)) as u16
+            let pos = ((self.t / c.secs.max(1e-3)) * (n - 1.0)).clamp(0.0, n - 1.0);
+            let f = pos.floor() as u16;
+            (f, (f + 1).min(c.frames.saturating_sub(1)), pos - pos.floor())
         }
     }
 
@@ -776,10 +785,14 @@ impl Actor {
             self.have.clear();
             self.pending = None;
         }
-        let f = self.frame_at();
+        let (f, nf, frac) = self.frame_pos();
         // show the wanted frame, or hold the nearest one before it
+        self.next = None;
         if let Some((_, l)) = self.have.iter().find(|(k, _)| *k == f) {
             self.shown = Some(l.clone());
+            if nf != f && frac > 0.02 {
+                self.next = self.have.iter().find(|(k, _)| *k == nf).map(|(_, l)| (l.clone(), frac));
+            }
         } else if let Some((_, l)) = self.have.iter().filter(|(k, _)| *k < f).max_by_key(|(k, _)| *k) {
             self.shown = Some(l.clone());
         }
@@ -956,10 +969,10 @@ fn draw_as(cv: &mut Canvas, slot: &str, id: &str, mood: Mood, still: &str, cx: i
         match (a.pca, a.shown.clone()) {
             (Some(pc), Some(lit)) => {
                 shadow(cv, cx, bottom, h, alpha);
-                blit_frame(cv, pc, &lit, cx, bottom, h, alpha, flip, p);
+                blit_frame(cv, pc, &lit, a.next.as_ref().map(|(n, k)| (&**n, *k)), cx, bottom, h, alpha, flip, p);
                 if let Some((old, f)) = &a.fade {
                     let k = (f / 0.25).clamp(0.0, 1.0);
-                    blit_frame(cv, pc, old, cx, bottom, h, (alpha as f32 * k) as u32, flip, p);
+                    blit_frame(cv, pc, old, None, cx, bottom, h, (alpha as f32 * k) as u32, flip, p);
                 }
             }
             _ => {
@@ -982,12 +995,15 @@ fn shadow(cv: &mut Canvas, cx: i32, bottom: i32, h: i32, alpha: u32) {
 }
 
 /// Draw a lit frame with the procedural layer: the still's feet stay planted at (cx, bottom);
-/// squash scales about the feet (keeping volume), lean shears the body over its feet.
+/// squash scales about the feet (keeping volume), lean shears the body over its feet. `next`
+/// (another frame and 0..1) is blended in the same pass: the in-between of two clip frames.
+/// Fixed point, bilinear, alpha-weighted; opaque pixels are written directly.
 #[allow(clippy::too_many_arguments)]
-fn blit_frame(cv: &mut Canvas, pc: &Pca, lit: &Lit, cx: i32, bottom: i32, h: i32, alpha: u32, flip: bool, p: Proc) {
+fn blit_frame(cv: &mut Canvas, pc: &Pca, lit: &Lit, next: Option<(&Lit, f32)>, cx: i32, bottom: i32, h: i32, alpha: u32, flip: bool, p: Proc) {
     if alpha == 0 {
         return;
     }
+    let _pr = crate::prof::scope("blit (clip)");
     let s = cv.us(h) as f32 / pc.still.3 as f32; // screen px per frame px
     let sq = p.squash.clamp(-0.25, 0.25) * 0.06;
     let sy = s * (1.0 + sq);
@@ -998,80 +1014,148 @@ fn blit_frame(cv: &mut Canvas, pc: &Pca, lit: &Lit, cx: i32, bottom: i32, h: i32
     let fay = (pc.still.1 + pc.still.3) as f32;
     let ax = cv.u(cx) as f32 + p.recoil * cv.k;
     let ay = cv.u(bottom) as f32;
-    let img = &lit.img;
-    let (iw, ih) = (img.w, img.h);
-    // screen bounds of the frame's content
-    let top = ay - (fay - lit.oy) * sy;
-    let bot = ay - (fay - (lit.oy + ih as f32 * lit.mip)) * sy;
-    let span = |fx: f32| (fx - fax) * sx;
-    let (l0, l1) = (span(lit.ox), span(lit.ox + iw as f32 * lit.mip));
-    let (mut lx, mut rx) = if flip { (-l1, -l0) } else { (l0, l1) };
+    let sgn = if flip { -1.0 } else { 1.0 };
+    // screen bounds: the union of both frames' content
+    let bounds = |l: &Lit| {
+        let top = ay - (fay - l.oy) * sy;
+        let bot = ay - (fay - (l.oy + l.img.h as f32 * l.mip)) * sy;
+        let (l0, l1) = ((l.ox - fax) * sx, (l.ox + l.img.w as f32 * l.mip - fax) * sx);
+        let (lx, rx) = if flip { (-l1, -l0) } else { (l0, l1) };
+        (top, bot, lx, rx)
+    };
+    let (mut top, mut bot, mut lx, mut rx) = bounds(lit);
+    if let Some((n, _)) = next {
+        let b = bounds(n);
+        top = top.min(b.0);
+        bot = bot.max(b.1);
+        lx = lx.min(b.2);
+        rx = rx.max(b.3);
+    }
     let lean_max = shear * (ay - top);
     lx += lean_max.min(0.0);
     rx += lean_max.max(0.0);
-    let y0 = (top.floor() as i32 - 1).max(0);
-    let y1 = (bot.ceil() as i32 + 1).min(cv.h);
-    let x0 = ((ax + lx).floor() as i32 - 1).max(0);
-    let x1 = ((ax + rx).ceil() as i32 + 1).min(cv.w);
+    let (c0, c1, c2, c3) = cv.clip_px();
+    let y0 = (top.floor() as i32 - 1).max(c1);
+    let y1 = (bot.ceil() as i32 + 1).min(c3);
+    let x0 = ((ax + lx).floor() as i32 - 1).max(c0);
+    let x1 = ((ax + rx).ceil() as i32 + 1).min(c2);
     if y1 <= y0 || x1 <= x0 {
         return;
     }
     let w = cv.w as usize;
-    let inv_m = 1.0 / lit.mip;
-    let work = ((x1 - x0) * (y1 - y0)) as usize * 3;
-    let (ox, oy) = (lit.ox, lit.oy);
+    let work = ((x1 - x0) * (y1 - y0)) as usize * if next.is_some() { 3 } else { 2 };
+    let kn = next.map(|(_, k)| (k.clamp(0.0, 1.0) * 256.0) as u32).unwrap_or(0);
+    let nimg = next.map(|(n, _)| n);
     crate::gfx::par_rows(&mut cv.px, w, y0, y1, work, |y, row| {
         let dy = y as f32 + 0.5 - ay;
-        // frame y, then image y
         let fy = fay + dy / sy;
-        let iy = (fy - oy) * inv_m - 0.5;
-        if iy < -1.0 || iy > ih as f32 {
+        let shift = shear * -dy;
+        // per source: rows and fixed-point x stepping for this destination row
+        let setup = |l| row_setup(l, fy, fax, ax, shift, sx, sgn, x0);
+        let mut ra = setup(lit);
+        let mut rb = nimg.and_then(setup);
+        if ra.is_none() && rb.is_none() {
             return;
         }
-        let shift = shear * -dy;
-        let y_a = iy.floor() as i32;
-        let ty = iy - y_a as f32;
         for x in x0..x1 {
-            let mut dx = x as f32 + 0.5 - ax - shift;
-            if flip {
-                dx = -dx;
-            }
-            let fx = fax + dx / sx;
-            let ix = (fx - ox) * inv_m - 0.5;
-            if ix < -1.0 || ix > iw as f32 {
-                continue;
-            }
-            let x_a = ix.floor() as i32;
-            let tx = ix - x_a as f32;
-            let get = |xx: i32, yy: i32| -> u32 {
-                if xx < 0 || yy < 0 || xx >= iw || yy >= ih {
-                    0
-                } else {
-                    img.px[(yy * iw + xx) as usize]
-                }
+            let sa = ra.as_mut().map(|r| r.sample()).unwrap_or([0; 4]);
+            let (va, vr, vg, vb) = if let Some(r) = rb.as_mut() {
+                let sb = r.sample();
+                let ka = 256 - kn;
+                (((sa[0] as u64 * ka as u64 + sb[0] as u64 * kn as u64) >> 8) as u32, ((sa[1] as u64 * ka as u64 + sb[1] as u64 * kn as u64) >> 8) as u32, ((sa[2] as u64 * ka as u64 + sb[2] as u64 * kn as u64) >> 8) as u32, ((sa[3] as u64 * ka as u64 + sb[3] as u64 * kn as u64) >> 8) as u32)
+            } else {
+                (sa[0], sa[1], sa[2], sa[3])
             };
-            let q = [get(x_a, y_a), get(x_a + 1, y_a), get(x_a, y_a + 1), get(x_a + 1, y_a + 1)];
-            if (q[0] | q[1] | q[2] | q[3]) >> 24 == 0 {
+            if va == 0 {
                 continue;
             }
-            let wts = [(1.0 - tx) * (1.0 - ty), tx * (1.0 - ty), (1.0 - tx) * ty, tx * ty];
-            let (mut r, mut g, mut b, mut a) = (0.0f32, 0.0f32, 0.0f32, 0.0f32);
-            for k in 0..4 {
-                let pa = (q[k] >> 24) as f32 * wts[k];
-                r += ((q[k] >> 16) & 255) as f32 * pa;
-                g += ((q[k] >> 8) & 255) as f32 * pa;
-                b += (q[k] & 255) as f32 * pa;
-                a += pa;
-            }
-            if a < 0.5 {
-                continue;
-            }
-            let c = ((r / a) as u32) << 16 | ((g / a) as u32) << 8 | (b / a) as u32;
-            let al = (a as u32).min(255) * alpha / 255;
+            // coverage 0..255, premultiplied colour 0..255
+            let mut a = (va >> 8).min(255);
+            let (mut r, mut g, mut b) = ((vr / 255) >> 8, (vg / 255) >> 8, (vb / 255) >> 8);
             let d = &mut row[x as usize];
-            *d = crate::gfx::blend_px(*d, c, al);
+            if a >= 255 && alpha >= 255 {
+                *d = 0xFF00_0000 | (r.min(255) << 16) | (g.min(255) << 8) | b.min(255);
+                continue;
+            }
+            if alpha < 255 {
+                a = a * alpha / 255;
+                r = r * alpha / 255;
+                g = g * alpha / 255;
+                b = b * alpha / 255;
+            }
+            if a == 0 {
+                continue;
+            }
+            let dv = *d;
+            let inv = 255 - a;
+            let m = |dc: u32, pc: u32| (dc * inv / 255 + pc).min(255);
+            let na = (a + (dv >> 24) * inv / 255).min(255);
+            *d = (na << 24) | (m((dv >> 16) & 255, r) << 16) | (m((dv >> 8) & 255, g) << 8) | m(dv & 255, b);
         }
     });
+}
+
+#[allow(clippy::too_many_arguments)]
+fn row_setup(l: &Lit, fy: f32, fax: f32, ax: f32, shift: f32, sx: f32, sgn: f32, x0: i32) -> Option<Row<'_>> {
+    let iy = (fy - l.oy) / l.mip - 0.5;
+    if iy < -1.0 || iy > l.img.h as f32 {
+        return None;
+    }
+    let ya = iy.floor() as i32;
+    let wy = (((iy - ya as f32) * 16.0) as u32).min(16);
+    let row_of = |r: i32| if r < 0 || r >= l.img.h { None } else { Some(&l.img.px[(r * l.img.w) as usize..((r + 1) * l.img.w) as usize]) };
+    // image x = a + b * screen x
+    let b = sgn / (sx * l.mip);
+    let a = (fax + sgn * (0.5 - ax - shift) / sx - l.ox) / l.mip - 0.5;
+    Some(Row { ra: row_of(ya), rb: row_of(ya + 1), w: l.img.w as i64, wy, fx: ((a + b * x0 as f32) * 65536.0) as i64, step: (b * 65536.0) as i64 })
+}
+
+/// One source row pair for a destination row: bilinear taps stepping in 16.16 fixed point.
+struct Row<'a> {
+    ra: Option<&'a [u32]>,
+    rb: Option<&'a [u32]>,
+    w: i64,
+    wy: u32,
+    fx: i64,
+    step: i64,
+}
+
+impl Row<'_> {
+    /// Alpha-weighted bilinear sample, advancing one pixel: (sum a*w, sum r*a*w, g, b), weights
+    /// summing to 256.
+    #[inline]
+    fn sample(&mut self) -> [u32; 4] {
+        let xi = self.fx >> 16;
+        let wx = ((self.fx >> 12) & 15) as u32;
+        self.fx += self.step;
+        if xi < -1 || xi >= self.w {
+            return [0; 4];
+        }
+        let tap = |r: Option<&[u32]>, x: i64| -> u32 {
+            match r {
+                Some(r) if x >= 0 && x < self.w => r[x as usize],
+                _ => 0,
+            }
+        };
+        let q = [tap(self.ra, xi), tap(self.ra, xi + 1), tap(self.rb, xi), tap(self.rb, xi + 1)];
+        if (q[0] | q[1] | q[2] | q[3]) >> 24 == 0 {
+            return [0; 4];
+        }
+        let (wx0, wy0) = (16 - wx, 16 - self.wy);
+        let ws = [wx0 * wy0, wx * wy0, wx0 * self.wy, wx * self.wy];
+        let mut o = [0u32; 4];
+        for k in 0..4 {
+            let aw = (q[k] >> 24) * ws[k];
+            if aw == 0 {
+                continue;
+            }
+            o[0] += aw;
+            o[1] += ((q[k] >> 16) & 255) * aw;
+            o[2] += ((q[k] >> 8) & 255) * aw;
+            o[3] += (q[k] & 255) * aw;
+        }
+        o
+    }
 }
 
 /// Creatures (no rig in the game, only stills): motion that fits a round body. A squashy

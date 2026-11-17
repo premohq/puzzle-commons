@@ -86,6 +86,12 @@ pub fn bench(width: i32) {
         time("board well", cv, &|cv| cv.round_grad(308, 108, 260, 520, 4, 0xFF101630, 0xFF070A18, 255));
         time("board wash", cv, &|cv| cv.rect_a(308, 108 + 416, 260, 104, 0xFF88AAFF, 10));
         time("plate glass", cv, &|cv| cv.glass(300, 40, 276, 50, 25, 0xFF0A1124, 175));
+        // a character playing its 3D idle clip (two blended frames), menu and match size
+        for (h, name) in [(600, "clip char 600 (anim)"), (1130, "clip char 1130 (anim)")] {
+            crate::anim::draw(cv, "bench", "kaede", crate::anim::Mood::Idle, 900, 700, h, 255, true);
+            std::thread::sleep(std::time::Duration::from_millis(300));
+            time(name, cv, &|cv| crate::anim::draw(cv, "bench", "kaede", crate::anim::Mood::Idle, 900, 700, h, 255, true));
+        }
         time("grid 30 lines", cv, &|cv| {
             for i in 0..30 {
                 cv.rect_a(308 + i * 9, 108, 1, 520, 0xFF334466, 70);
@@ -365,7 +371,7 @@ pub fn anim_shots(dir: &str, width: i32) {
     let mut cv = crate::gfx::Canvas::screen(width);
     // (id, flip, cx, expression changes at times)
     let cast: [(&str, bool, i32, &[(f32, &str)]); 4] = [
-        ("kai", false, 190, &[(0.0, "smile"), (0.6, "delighted"), (1.6, "angry"), (2.3, "shocked")]),
+        ("kaede", false, 190, &[(0.0, "smile"), (0.6, "delighted"), (1.6, "angry"), (2.3, "shocked")]),
         ("mira", false, 500, &[(0.0, "normal"), (1.2, "smile"), (2.4, "sad")]),
         ("nami", true, 800, &[(0.0, "smug"), (1.0, "p-rival"), (2.0, "sleepy")]),
         ("hana", true, 1100, &[(0.0, "smile")]),

@@ -29,10 +29,11 @@ import numpy as np
 ARGV = sys.argv[sys.argv.index("--") + 1:]
 REPO = ARGV[0]
 ONLY = set(a for a in ARGV[1:] if ":" not in a)
-QUAL = next((int(a[2:]) for a in ARGV[1:] if a.startswith("q:")), 82)
+QUAL = next((int(a[2:]) for a in ARGV[1:] if a.startswith("q:")), 60)
 SRC = os.path.join(REPO, "target", "anim_frames")
 OUT = os.path.join(REPO, "assets", "anim")
-ORDER = ["idle", "talk", "attack", "cast", "hit", "hit_big", "worried", "win", "lose"]
+# "talk" is rendered but not packed: story scenes use stills with the puppet layer (puppet.rs)
+ORDER = ["idle", "attack", "cast", "hit", "hit_big", "worried", "win", "lose"]
 MB = 16
 R = 4  # motion search range, pixels
 
