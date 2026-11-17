@@ -3,34 +3,17 @@
 
 use crate::font::Weight;
 use crate::gfx::{darken, hex, lighten, mix, Canvas};
+use crate::fx::Fx;
 use crate::save::Settings;
 use crate::theme::*;
 use purtris_sim::capsule as cap;
 use purtris_sim::chain as ch;
 use purtris_sim::panel as pn;
 use purtris_sim::quad as qd;
-use purtris_sim::{Board, Ev, Match, Outcome, SeatKind, Style};
+use purtris_sim::{Board, Match, Outcome, SeatKind, Style};
 
 pub const W: i32 = 1280;
 pub const H: i32 = 720;
-
-pub struct Particle {
-    x: f32,
-    y: f32,
-    vx: f32,
-    vy: f32,
-    life: f32,
-    max: f32,
-    color: u32,
-    size: f32,
-}
-pub struct Callout {
-    seat: usize,
-    text: String,
-    t: f32,
-    color: u32,
-    scale: i32,
-}
 
 #[derive(Clone, Copy, Default)]
 #[allow(dead_code)] // x/y/w/h: the seat's whole slot, kept for overlays
@@ -145,91 +128,6 @@ impl Scene {
     }
 }
 
-pub struct Fx {
-    pub particles: Vec<Particle>,
-    pub callouts: Vec<Callout>,
-    pub shake: f32,
-    pub flash: [f32; 6],
-    pub energy: f32,
-    seed: u32,
-}
-impl Fx {
-    pub fn new() -> Self {
-        Fx { particles: Vec::new(), callouts: Vec::new(), shake: 0.0, flash: [0.0; 6], energy: 0.0, seed: 77 }
-    }
-    fn rnd(&mut self) -> f32 {
-        self.seed = self.seed.wrapping_mul(1664525).wrapping_add(1013904223);
-        (self.seed >> 8) as f32 / 16777216.0
-    }
-    pub fn burst(&mut self, x: f32, y: f32, color: u32, n: usize, power: f32, cap: usize) {
-        for _ in 0..n {
-            if self.particles.len() >= cap {
-                return;
-            }
-            let a = self.rnd() * std::f32::consts::TAU;
-            let sp = (0.4 + self.rnd() * 1.8) * power;
-            let life = 0.25 + self.rnd() * 0.35;
-            let size = 1.5 + self.rnd() * 2.5;
-            self.particles.push(Particle { x, y, vx: a.cos() * sp, vy: a.sin() * sp - 1.0, life, max: life, color, size });
-        }
-    }
-    pub fn callout(&mut self, seat: usize, text: String, color: u32, scale: i32) {
-        if text.is_empty() {
-            return;
-        }
-        self.callouts.retain(|c| c.seat != seat);
-        self.callouts.push(Callout { seat, text, t: 0.0, color, scale });
-    }
-    pub fn update(&mut self, dt: f32) {
-        for p in self.particles.iter_mut() {
-            p.x += p.vx * dt * 60.0;
-            p.y += p.vy * dt * 60.0;
-            p.vy += 0.04 * dt * 60.0;
-            p.vx *= 0.93;
-            p.vy *= 0.93;
-            p.life -= dt;
-        }
-        self.particles.retain(|p| p.life > 0.0);
-        for c in self.callouts.iter_mut() {
-            c.t += dt;
-        }
-        self.callouts.retain(|c| c.t < 1.4);
-        self.shake *= 0.85;
-        for f in self.flash.iter_mut() {
-            *f *= 0.9;
-        }
-        self.energy *= 0.995;
-    }
-    pub fn draw(&self, cv: &mut Canvas, geoms: &[Geom; 6]) {
-        for p in &self.particles {
-            let a = (p.life / p.max * 255.0) as u32;
-            cv.glow(p.x, p.y, p.size * 3.0, p.color, a / 3);
-            cv.circle(p.x, p.y, p.size * 0.6, lighten(p.color, 120), a);
-        }
-        for c in &self.callouts {
-            let g = geoms[c.seat];
-            if g.cell == 0 {
-                continue;
-            }
-            let rise = (c.t * 30.0) as i32;
-            let a = if c.t > 1.0 { ((1.4 - c.t) / 0.4 * 255.0) as u32 } else { 255 };
-            let cx = g.fx + g.cols * g.cell / 2;
-            let y = g.fy + g.rows * g.cell / 3 - rise;
-            let mut sc = c.scale;
-            while sc > 1 && Canvas::text_w(&c.text, sc) > g.cols * g.cell + g.cell * 2 {
-                sc -= 1;
-            }
-            let txt = crate::ui::nice(&c.text);
-            let w = Canvas::text_wb(&txt, sc, Weight::Black);
-            let x0 = cx - w / 2;
-            for (dx, dy) in [(-2, 0), (2, 0), (0, -2), (0, 2), (-2, -2), (2, 2), (-2, 2), (2, -2), (0, 3)] {
-                cv.text_weight(x0 + dx, y + dy, &txt, sc, 0xFF0A_0E1E, a * 3 / 4, Weight::Black);
-            }
-            cv.text_weight(x0, y, &txt, sc, c.color, a, Weight::Black);
-        }
-    }
-}
-
 /// Board area rectangles for the active seats.
 pub fn layout(m: &Match, humans: &[bool; 6], area: (i32, i32, i32, i32)) -> [Geom; 6] {
     let mut out = [Geom::default(); 6];
@@ -340,48 +238,24 @@ impl Renderer {
         Renderer { sprites: Sprites::new(), scene: Scene::new(), fx: Fx::new(), geoms: [Geom::default(); 6] }
     }
 
-    /// Feed this tick's sim events into particles/callouts. Returns nothing; audio is separate.
+    /// Feed this tick's sim events to the effects. Audio is separate.
     pub fn on_events(&mut self, m: &Match, st: &Settings) {
-        let cap = if st.theme == ThemeId::Tournament { 0 } else { st.preset.particle_cap() };
-        let n_active = m.active_count();
-        for (seat, e) in &m.events {
-            let s = *seat as usize;
-            let g = self.geoms[s];
-            if g.cell == 0 {
-                continue;
-            }
-            let style = m.seats[s].cfg.profile.style();
-            match e {
-                Ev::Burst { x, y, color } => {
-                    let (px, py) = cell_pos(style, &g, *x, *y, m.seats[s].board.as_ref());
-                    let c = theme_tint(st.theme, color_for(style, *color));
-                    let n = if n_active > 2 && !m.seats[s].cfg.kind.eq(&SeatKind::Human) { 2 } else { 6 };
-                    self.fx.burst(px + g.cell as f32 / 2.0, py + g.cell as f32 / 2.0, c, n, 1.0 + g.cell as f32 / 30.0, cap);
-                }
-                Ev::Clear { power, text } => {
-                    let l = look(st.theme);
-                    let scale = ((g.cell / 10).max(1) + if *power >= 6 { 1 } else { 0 }).min(5);
-                    self.fx.callout(s, text.clone(), if *power >= 4 { l.accent } else { l.text }, scale);
-                    self.fx.energy = (self.fx.energy + *power as f32 * 0.06).min(1.0);
-                    if st.shake && *power >= 6 {
-                        self.fx.shake = 6.0;
-                    }
-                }
-                Ev::AllClear => self.fx.callout(s, "ALL CLEAR!".into(), look(st.theme).good, (g.cell / 9).max(2)),
-                Ev::LevelClear => self.fx.callout(s, "BOTTLE CLEAR!".into(), look(st.theme).good, (g.cell / 9).max(2)),
-                Ev::GarbageLand { .. } => self.fx.flash[s] = 1.0,
-                Ev::Ko { .. } => {
-                    let (cx, cy) = (g.fx as f32 + (g.cols * g.cell) as f32 / 2.0, g.fy as f32 + (g.rows * g.cell) as f32 / 2.0);
-                    self.fx.burst(cx, cy, look(st.theme).warn, 40, 3.0, cap);
-                }
-                _ => {}
-            }
-        }
+        self.fx.on_events(m, &self.geoms, st);
     }
 
     pub fn draw_match(&mut self, cv: &mut Canvas, m: &Match, v: &View, area: (i32, i32, i32, i32)) {
         self.sprites.set_scale(cv.k);
         self.geoms = layout(m, &v.humans, area);
+        // boards kick when hit and on big moves
+        for i in 0..6 {
+            let (jx, jy) = self.fx.jolt(i);
+            let g = &mut self.geoms[i];
+            g.x += jx;
+            g.fx += jx;
+            g.y += jy;
+            g.fy += jy;
+        }
+        self.fx.k = cv.k;
         let st = v.settings;
         let n_active = m.active_count();
         for i in 0..6 {
@@ -391,14 +265,7 @@ impl Renderer {
             let faces = st.decorations && st.theme == ThemeId::Voyage && (v.humans[i] || n_active <= 2);
             self.draw_seat(cv, m, i, faces, v);
         }
-        if st.theme != ThemeId::Tournament {
-            self.fx.draw(cv, &self.geoms);
-        } else {
-            // Tournament keeps callouts (information the original showed), no particles
-            let parts = std::mem::take(&mut self.fx.particles);
-            self.fx.draw(cv, &self.geoms);
-            self.fx.particles = parts;
-        }
+        self.fx.draw(cv, m, &self.geoms, st);
     }
 
     fn draw_seat(&mut self, cv: &mut Canvas, m: &Match, i: usize, faces: bool, v: &View) {
@@ -580,10 +447,12 @@ impl Renderer {
         // dead / winner overlays
         if !seat.alive {
             cv.rect_a(g.fx, g.fy, fw, fh, 0xFF00_0000, 150);
-            let txt = if seat.ko_by.is_some() { "K.O." } else { "TOP OUT" };
-            cv.text_center(g.fx + fw / 2, g.fy + fh / 2 - 8 * ts, txt, ts + 1, l.warn);
+            if !self.fx.has_banner(i) {
+                let txt = if seat.ko_by.is_some() { "K.O." } else { "TOP OUT" };
+                cv.text_center(g.fx + fw / 2, g.fy + fh / 2 - 8 * ts, txt, ts + 1, l.warn);
+            }
         }
-        if m.outcome != Outcome::Running && m.is_winner(i) && !m.header.mode.is_solo() {
+        if m.outcome != Outcome::Running && m.is_winner(i) && !m.header.mode.is_solo() && !self.fx.has_banner(i) {
             cv.text_center(g.fx + fw / 2, g.fy + fh / 2 - 20 * ts, "WIN!", ts + 2, l.accent);
         }
     }
@@ -773,7 +642,6 @@ impl Renderer {
     #[allow(clippy::too_many_arguments)]
     fn draw_capsule(&mut self, cv: &mut Canvas, c: &cap::CapsuleState, g: &Geom, faces: bool, flat: bool, st: &Settings, t: f32) {
         let cell = g.cell;
-        let frame = ((t * 3.0) as i32 % 2) as u8;
         let flash_on = ((t * 12.0) as i32) % 2 == 0;
         for y in cap::VIS0..cap::H {
             for x in 0..cap::W {
@@ -791,7 +659,7 @@ impl Renderer {
                     cap::K_BOTTOM => CellKind::HalfB,
                     _ => CellKind::Single,
                 };
-                let spr = self.sprites.get(SpriteKey { kind, color: col, size: cell, face: faces, pattern: st.colorblind, flat, frame: if kind == CellKind::Virus { frame } else { 0 } });
+                let spr = self.sprites.get(SpriteKey { kind, color: col, size: cell, face: faces, pattern: st.colorblind, flat, frame: if kind == CellKind::Virus { virus_frame(t, i) } else { 0 } });
                 let px = g.fx + x * cell;
                 let py = g.fy + (y - cap::VIS0) * cell;
                 cv.blit(spr, px, py, 255);
@@ -948,7 +816,7 @@ impl Renderer {
 fn qd_color(v: u8) -> u32 {
     quad_color(v)
 }
-fn color_for(style: Style, c: u8) -> u32 {
+pub(crate) fn color_for(style: Style, c: u8) -> u32 {
     match style {
         Style::Quad => quad_color(c),
         Style::Chain => chain_color(c),
@@ -957,7 +825,7 @@ fn color_for(style: Style, c: u8) -> u32 {
     }
 }
 
-fn cell_pos(style: Style, g: &Geom, x: i32, y: i32, b: Option<&Board>) -> (f32, f32) {
+pub(crate) fn cell_pos(style: Style, g: &Geom, x: i32, y: i32, b: Option<&Board>) -> (f32, f32) {
     let vis0 = match style {
         Style::Quad => qd::VIS0,
         Style::Chain => ch::VIS0,
@@ -1007,4 +875,10 @@ fn draw_inputs(cv: &mut Canvas, x: i32, y: i32, bits: u16, ts: i32, l: &Look) {
 fn hud_label(cv: &mut Canvas, x: i32, y: i32, s: &str, ts: i32, c: u32) {
     cv.text_weight(x + 1, y + 1, s, ts, 0xFF00_0000, 150, Weight::Bold);
     cv.text_weight(x, y, s, ts, c, 255, Weight::Bold);
+}
+
+/// Germ animation frame (4-frame loop at ~6 fps), offset per cell so a board of germs doesn't bob in lockstep.
+fn virus_frame(t: f32, cell: usize) -> u8 {
+    let phase = (cell as u32).wrapping_mul(2_654_435_761) >> 30; // 0..3
+    (((t * 6.0) as u32 + phase) % 4) as u8
 }

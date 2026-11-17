@@ -331,7 +331,7 @@ fn art_sprite(k: SpriteKey) -> Option<Canvas> {
         CellKind::HalfT => format!("halft_{}", c),
         CellKind::HalfB => format!("halfb_{}", c),
         CellKind::Single => format!("single_{}", c),
-        CellKind::Virus => format!("virus_{}_{}", c, k.frame % 2),
+        CellKind::Virus => format!("virus_{}_{}", c, k.frame % 4),
         CellKind::Tile => format!("tile_{}", c),
         CellKind::Stone => "stone".to_string(),
         CellKind::Ghost => return None,
@@ -371,14 +371,9 @@ fn art_sprite(k: SpriteKey) -> Option<Canvas> {
                 cv.circle(sf * 0.5, sf * 0.58, sf * 0.04, d, 160);
             }
         }
-        CellKind::Virus => {
-            if pat != Pattern::None && s >= 12 {
-                draw_pattern(&mut cv, pat, sf * 0.5, sf * 0.74, sf * 0.1, darken(k.color, 140), 190);
-            }
-            if s >= 12 {
-                eyes(&mut cv, sf * 0.5, sf * 0.46, sf * 0.9, false, true);
-            }
-        }
+        // germ art: face modelled in, and each color is its own species (spiky / legged / puffy),
+        // so the silhouette carries the colorblind cue without a mark on top
+        CellKind::Virus => {}
         CellKind::Tile => {
             let p = if pat == Pattern::None { Pattern::Circle } else { pat };
             draw_pattern(&mut cv, p, sf * 0.5, sf * 0.5, sf * 0.22, lighten(k.color, 210), 235);

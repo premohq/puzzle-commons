@@ -14,6 +14,10 @@ pub fn enable(on: bool) {
     ON.with(|o| *o.borrow_mut() = on);
     ACC.with(|a| a.borrow_mut().clear());
 }
+/// Pause or resume timing without clearing what has been gathered.
+pub fn pause(paused: bool) {
+    ON.with(|o| *o.borrow_mut() = !paused);
+}
 
 pub struct Guard(Option<(&'static str, Instant)>);
 impl Drop for Guard {
@@ -44,7 +48,8 @@ pub fn report(frames: u32) {
     ACC.with(|a| {
         let mut v: Vec<(&str, (f64, u32))> = a.borrow().iter().map(|(k, v)| (*k, *v)).collect();
         v.sort_by(|x, y| y.1 .0.partial_cmp(&x.1 .0).unwrap());
-        for (n, (t, c)) in v.iter().take(14) {
+        let rows = std::env::var("PC_PROF_ROWS").ok().and_then(|v| v.parse().ok()).unwrap_or(14);
+        for (n, (t, c)) in v.iter().take(rows) {
             println!("      {:16} {:6.2} ms  ({} calls/frame)", n, t * 1000.0 / frames as f64, c / frames.max(1));
         }
         a.borrow_mut().clear();

@@ -1493,7 +1493,7 @@ impl App {
         match Game::new(h, devices, names, origin, training) {
             Ok(mut g) => {
                 g.chars = chars;
-                self.r.fx = crate::render::Fx::new();
+                self.r.fx = crate::fx::Fx::new();
                 self.r.scene.index = (self.r.scene.index + 1) % 5;
                 self.bg_world = self.r.scene.index;
                 if let Ok(mut s) = self.synth.lock() {
@@ -2620,8 +2620,7 @@ impl App {
         let energy = self.r.fx.energy;
         let _ = energy;
         self.bg_blur(70);
-        let shake = if self.st.shake && !self.st.reduce_motion { self.r.fx.shake } else { 0.0 };
-        let sx = (shake * ((self.t * 50.0).sin())) as i32;
+        let (sx, sy) = if self.st.shake && !self.st.reduce_motion { self.r.fx.shake_offset(self.t) } else { (0, 0) };
         let ah = if g.training { 634 } else { 668 };
         let active: Vec<usize> = (0..6).filter(|&i| g.m.seats[i].board.is_some()).collect();
         // the characters stand beside the boards, reacting to the match: always in the story,
@@ -2630,11 +2629,11 @@ impl App {
         let flank = self.st.characters && self.st.theme != ThemeId::Tournament && ((story && active.len() <= 4) || (self.st.chars_versus && active.len() <= 2));
         let crowd = active.len() > 2;
         let area = if !flank {
-            (20 + sx, 44, 1240, ah)
+            (20 + sx, 44 + sy, 1240, ah)
         } else if crowd {
-            (205 + sx, 44, 870, ah)
+            (205 + sx, 44 + sy, 870, ah)
         } else {
-            (250 + sx, 44, 780, ah)
+            (250 + sx, 44 + sy, 780, ah)
         };
         if flank {
             // story matches: the characters stand in their world's light

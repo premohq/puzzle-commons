@@ -58,6 +58,8 @@ pub struct Game {
     danger_prev: [bool; 6],
     chain_t: f32,
     clear_t: f32,
+    /// headless capture: the match clock stands still, effects keep animating
+    pub hold: bool,
 }
 
 impl Game {
@@ -102,6 +104,7 @@ impl Game {
             danger_prev: [false; 6],
             chain_t: 0.0,
             clear_t: 0.0,
+            hold: false,
         })
     }
 
@@ -302,6 +305,11 @@ impl Game {
                 self.toast = None;
             }
         }
+        if self.hold {
+            r.fx.update(dt);
+            input.clear_latch();
+            return;
+        }
         if self.finished() {
             // results wait a fixed time (counted in sim ticks), whatever the frame rate
             self.acc += elapsed;
@@ -340,6 +348,13 @@ impl Game {
             }
             input.clear_latch();
             r.fx.update(dt);
+            return;
+        }
+        // hit-stop: on a big moment the match clock holds for a few frames (client-side only;
+        // the sim just runs those ticks a moment later, so replays and results are unchanged)
+        if r.fx.hitstop > 0.0 {
+            r.fx.update(dt);
+            input.clear_latch();
             return;
         }
         self.acc += elapsed * self.speed as f64;

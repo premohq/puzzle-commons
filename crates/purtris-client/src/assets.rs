@@ -35,10 +35,16 @@ static FILES: &[(&str, &[u8])] = &[
     ("tile_yellow", include_bytes!("../../../assets/sprites/tile_yellow.tga")),
     ("virus_blue_0", include_bytes!("../../../assets/sprites/virus_blue_0.tga")),
     ("virus_blue_1", include_bytes!("../../../assets/sprites/virus_blue_1.tga")),
+    ("virus_blue_2", include_bytes!("../../../assets/sprites/virus_blue_2.tga")),
+    ("virus_blue_3", include_bytes!("../../../assets/sprites/virus_blue_3.tga")),
     ("virus_red_0", include_bytes!("../../../assets/sprites/virus_red_0.tga")),
     ("virus_red_1", include_bytes!("../../../assets/sprites/virus_red_1.tga")),
+    ("virus_red_2", include_bytes!("../../../assets/sprites/virus_red_2.tga")),
+    ("virus_red_3", include_bytes!("../../../assets/sprites/virus_red_3.tga")),
     ("virus_yellow_0", include_bytes!("../../../assets/sprites/virus_yellow_0.tga")),
     ("virus_yellow_1", include_bytes!("../../../assets/sprites/virus_yellow_1.tga")),
+    ("virus_yellow_2", include_bytes!("../../../assets/sprites/virus_yellow_2.tga")),
+    ("virus_yellow_3", include_bytes!("../../../assets/sprites/virus_yellow_3.tga")),
 ];
 
 /// Decode an uncompressed 32-bit TGA into a canvas with straight alpha.
