@@ -1,5 +1,5 @@
-//! Text: anti-aliased glyph atlases rendered in Blender from Lato (SIL OFL 1.1, see
-//! assets/fonts/LICENSE-OFL.txt). Glyphs are cut from the atlas and resampled per size, cached.
+//! Text: anti-aliased glyph atlases rendered in Blender from Lato, plus Mochiy Pop One and
+//! M PLUS Rounded 1c baked by tools/font_atlas_pil.py (all SIL OFL 1.1, see assets/fonts/). Glyphs are cut from the atlas and resampled per size, cached.
 //! A small vector icon set (arrows, star, dots, heart, play) is drawn as shapes.
 
 use crate::gfx::Canvas;
@@ -11,12 +11,18 @@ pub enum Weight {
     Regular,
     Bold,
     Black,
+    /// Mochiy Pop One: the chunky, friendly display face for titles, headers and big numbers
+    Display,
+    /// M PLUS Rounded 1c Black: rounded labels for buttons, tabs and key caps
+    Round,
 }
 
-const ATLAS: [(&[u8], &str); 3] = [
+const ATLAS: [(&[u8], &str); 5] = [
     (include_bytes!("../../../assets/sprites/font_regular.tga"), include_str!("../../../assets/sprites/font_regular.txt")),
     (include_bytes!("../../../assets/sprites/font_bold.tga"), include_str!("../../../assets/sprites/font_bold.txt")),
     (include_bytes!("../../../assets/sprites/font_black.tga"), include_str!("../../../assets/sprites/font_black.txt")),
+    (include_bytes!("../../../assets/sprites/font_display.tga"), include_str!("../../../assets/sprites/font_display.txt")),
+    (include_bytes!("../../../assets/sprites/font_round.tga"), include_str!("../../../assets/sprites/font_round.txt")),
 ];
 const CELL: i32 = 80; // 1.25 em at 64 px per em
 const PPU: f32 = 64.0;
@@ -70,6 +76,8 @@ fn wi(w: Weight) -> usize {
         Weight::Regular => 0,
         Weight::Bold => 1,
         Weight::Black => 2,
+        Weight::Display => 3,
+        Weight::Round => 4,
     }
 }
 
