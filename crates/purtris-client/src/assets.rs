@@ -299,6 +299,8 @@ thread_local! {
 
 /// The file for a cast member, expression and framing, falling back to a close expression.
 fn cast_key(name: &str, expr: &str, bust: bool) -> Option<&'static str> {
+    // the courier is drawn with whichever model the player picked
+    let name = if name == "mira" { crate::cast::hero_sprite() } else { name };
     fn creature_expr(e: &str) -> &str {
         match e {
             "normal" | "smug" => "smile",

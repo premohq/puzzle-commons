@@ -323,7 +323,7 @@ pub fn scenes(dir: &str, width: i32) {
 }
 
 fn cast_id(id: &str) -> &'static str {
-    crate::cast::SCENES.iter().find(|s| s.id == id).map(|s| s.id).unwrap_or("prologue")
+    crate::cast::scene(id).or_else(|| crate::cast::scene("prologue")).map(|s| s.id).unwrap_or("prologue")
 }
 
 /// The cast under every world's light: `--light-shots DIR WIDTH`.

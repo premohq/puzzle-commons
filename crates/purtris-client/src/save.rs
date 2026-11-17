@@ -270,6 +270,10 @@ pub struct Card {
     pub bio: String,
     pub country: String,
     pub favorite: usize,
+    /// the story's protagonist, as the player named her (cast::hero); empty until asked
+    pub hero: String,
+    /// the courier's model: false = girl (Mira's), true = boy
+    pub hero_boy: bool,
 }
 impl Card {
     pub fn character(&self) -> &str {
@@ -277,13 +281,18 @@ impl Card {
     }
     pub fn load() -> Self {
         let m = read_kv("card.txt");
-        Card {
+        let card = Card {
             character: m.get("character").filter(|c| crate::cast::CAST.iter().any(|x| x.id == c.as_str())).cloned().unwrap_or_else(|| "mira".into()),
             name: m.get("name").cloned().unwrap_or_else(|| "PLAYER".into()),
             bio: m.get("bio").cloned().unwrap_or_default(),
             country: m.get("country").cloned().unwrap_or_default(),
             favorite: m.get("favorite").and_then(|v| v.parse().ok()).unwrap_or(0),
-        }
+            hero: m.get("hero").map(|h| crate::cast::clean_hero(h)).unwrap_or_default(),
+            hero_boy: m.get("hero_model").map(|v| v == "boy").unwrap_or(false),
+        };
+        crate::cast::set_hero(&card.hero);
+        crate::cast::set_hero_boy(card.hero_boy);
+        card
     }
     pub fn save(&self) {
         let mut m = BTreeMap::new();
@@ -292,6 +301,12 @@ impl Card {
         m.insert("bio".into(), self.bio.clone());
         m.insert("country".into(), self.country.clone());
         m.insert("favorite".into(), self.favorite.to_string());
+        if !self.hero.is_empty() {
+            m.insert("hero".into(), self.hero.clone());
+        }
+        m.insert("hero_model".into(), if self.hero_boy { "boy" } else { "girl" }.into());
+        crate::cast::set_hero(&self.hero);
+        crate::cast::set_hero_boy(self.hero_boy);
         write_kv("card.txt", &m);
     }
 }
