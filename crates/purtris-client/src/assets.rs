@@ -389,6 +389,16 @@ pub fn draw_char(cv: &mut Canvas, name: &str, expr: &str, cx: i32, bottom: i32, 
 
 #[allow(clippy::too_many_arguments)]
 pub fn draw_char_ex(cv: &mut Canvas, name: &str, expr: &str, cx: i32, bottom: i32, h: i32, alpha: u32, flip: bool) {
+    // characters with 3D motion clips play them (anim.rs): real idles in every menu
+    if crate::anim::draw_auto(cv, name, expr, cx, bottom, h, alpha, flip) {
+        return;
+    }
+    draw_still(cv, name, expr, cx, bottom, h, alpha, flip);
+}
+
+/// The still for `expr`, moved by the puppet layer (puppet.rs).
+#[allow(clippy::too_many_arguments)]
+pub fn draw_still(cv: &mut Canvas, name: &str, expr: &str, cx: i32, bottom: i32, h: i32, alpha: u32, flip: bool) {
     let Some(key) = cast_key(name, expr, false) else { return };
     // creatures are square renders: draw them a bit smaller than people
     let h = if is_creature(name) { h * 11 / 20 } else { h };

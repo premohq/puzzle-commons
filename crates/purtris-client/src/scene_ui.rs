@@ -536,6 +536,8 @@ impl App {
         motes(&mut self.cv, world, mood, v.st, still);
 
         // ---------------------------------------------------------- the cast
+        // an expression per line, drawn in two light layers: stills with the puppet layer
+        crate::anim::set_stills_only(true);
         let dim_rig = dim(&rig);
         let fade_all = v.ending.map(|e| 1.0 - (e / OUTRO).min(1.0)).unwrap_or(1.0);
         let mut order: Vec<usize> = (0..v.actors.len()).collect();
@@ -570,6 +572,7 @@ impl App {
                 layer(&rig, (al as f32 * a.lit) as u32);
             }
         }
+        crate::anim::set_stills_only(false);
         // get the next speaker's light ready a frame ahead (lighting a pose takes a moment)
         if let Some(next) = sc.lines.get(line + 1) {
             if v.actors.iter().any(|a| a.who == next.who) {

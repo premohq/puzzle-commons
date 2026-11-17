@@ -802,10 +802,15 @@ struct State {
     actors: HashMap<String, Actor>,
     reduce: bool,
     frame: u64,
+    /// automatic slots for plain character draws: (slot, id, x, y, h, frame last drawn)
+    autos: Vec<(String, String, f32, f32, f32, u64)>,
+    next_auto: u64,
+    /// stills only (story scenes: an expression per line, drawn in two light layers)
+    stills: bool,
 }
 
 thread_local! {
-    static STATE: std::cell::RefCell<State> = std::cell::RefCell::new(State { actors: HashMap::new(), reduce: false, frame: 0 });
+    static STATE: std::cell::RefCell<State> = std::cell::RefCell::new(State { actors: HashMap::new(), reduce: false, frame: 0, autos: Vec::new(), next_auto: 0, stills: false });
 }
 
 /// Reduce motion: characters keep still (called each frame from the app).
@@ -818,10 +823,67 @@ pub fn sweep() {
     STATE.with(|s| {
         let mut s = s.borrow_mut();
         s.frame += 1;
+        let f = s.frame;
+        s.autos.retain(|a| a.5 + 2 >= f);
         if s.frame % 60 == 0 {
             s.actors.retain(|_, a| a.last.elapsed().as_secs_f32() < 3.0);
         }
     });
+}
+
+/// While on, plain character draws show stills (with the puppet layer) instead of clips.
+pub fn set_stills_only(on: bool) {
+    STATE.with(|s| s.borrow_mut().stills = on);
+}
+
+/// A plain character draw (assets::draw_char_ex): when `name` has motion clips, play them in a
+/// slot matched to where this character was drawn last frame and return true; the expression
+/// picks the clip. False: the caller draws the still.
+#[allow(clippy::too_many_arguments)]
+pub fn draw_auto(cv: &mut Canvas, name: &str, expr: &str, cx: i32, bottom: i32, h: i32, alpha: u32, flip: bool) -> bool {
+    if !has_clips(name) {
+        return false;
+    }
+    let slot = STATE.with(|s| {
+        let mut s = s.borrow_mut();
+        if s.stills || s.reduce {
+            return None;
+        }
+        let f = s.frame;
+        let (x, y, hh) = (cx as f32, bottom as f32, h as f32);
+        let mut best: Option<(usize, f32)> = None;
+        for (k, a) in s.autos.iter().enumerate() {
+            if a.1 != name || a.5 == f && ((a.2 - x).abs() + (a.3 - y).abs() > 3.0) {
+                continue;
+            }
+            let r = hh / a.4.max(1.0);
+            let d = (a.2 - x).abs() + (a.3 - y).abs();
+            if (0.7..1.43).contains(&r) && d < hh * 0.4 && best.map(|b| d < b.1).unwrap_or(true) {
+                best = Some((k, d));
+            }
+        }
+        let k = match best {
+            Some((k, _)) => k,
+            None => {
+                s.next_auto += 1;
+                let slot = format!("auto:{}", s.next_auto);
+                s.autos.push((slot, name.to_string(), x, y, hh, f));
+                s.autos.len() - 1
+            }
+        };
+        let a = &mut s.autos[k];
+        (a.2, a.3, a.4, a.5) = (x, y, hh, f);
+        Some(a.0.clone())
+    });
+    let Some(slot) = slot else { return false };
+    let mood = match expr {
+        "delighted" => Mood::Win,
+        "sad" | "sleepy" => Mood::Lose,
+        "shocked" => Mood::Worried,
+        _ => Mood::Idle,
+    };
+    draw_as(cv, &slot, name, mood, expr, cx, bottom, h, alpha, flip);
+    true
 }
 
 /// Trigger a reaction on the character in `slot`. `toward` is +1 when the action is to the
@@ -846,11 +908,17 @@ pub fn reset(slot: &str) {
 /// size and place draw_char gives the still), doing `mood` between reactions.
 #[allow(clippy::too_many_arguments)]
 pub fn draw(cv: &mut Canvas, slot: &str, id: &str, mood: Mood, cx: i32, bottom: i32, h: i32, alpha: u32, flip: bool) {
+    draw_as(cv, slot, id, mood, mood.expr(), cx, bottom, h, alpha, flip);
+}
+
+/// `draw`, with the still to show (`still`) until the first frame is decoded or without clips.
+#[allow(clippy::too_many_arguments)]
+fn draw_as(cv: &mut Canvas, slot: &str, id: &str, mood: Mood, still: &str, cx: i32, bottom: i32, h: i32, alpha: u32, flip: bool) {
     let id = if id == "mira" { crate::cast::hero_sprite() } else { id };
     let reduce = STATE.with(|s| s.borrow().reduce);
     if reduce || crate::assets::is_creature(id) && !has_anim(id) {
         if reduce {
-            crate::assets::draw_char_ex(cv, id, mood.expr(), cx, bottom, h, alpha, flip);
+            crate::assets::draw_still(cv, id, still, cx, bottom, h, alpha, flip);
         } else {
             creature(cv, slot, id, mood, cx, bottom, h, alpha, flip);
         }
@@ -876,7 +944,7 @@ pub fn draw(cv: &mut Canvas, slot: &str, id: &str, mood: Mood, cx: i32, bottom: 
         if first && a.pca.is_some() {
             // wait briefly for the very first frame so a character never pops in late
             if let Some(rx) = &a.rx {
-                if let Ok(r) = rx.recv_timeout(std::time::Duration::from_millis(120)) {
+                if let Ok(r) = rx.recv_timeout(std::time::Duration::from_millis(if slot.starts_with("auto:") { 40 } else { 120 })) {
                     a.pending = None;
                     a.have.push((r.frame, r.lit.clone()));
                     a.shown = Some(r.lit);
@@ -896,7 +964,7 @@ pub fn draw(cv: &mut Canvas, slot: &str, id: &str, mood: Mood, cx: i32, bottom: 
             }
             _ => {
                 // no clips for this character (or not decoded yet): the still, with the same springs
-                crate::assets::draw_char_ex(cv, id, mood.expr(), cx + p.recoil as i32, bottom, h, alpha, flip);
+                crate::assets::draw_still(cv, id, still, cx + p.recoil as i32, bottom, h, alpha, flip);
             }
         }
     });
@@ -1032,5 +1100,5 @@ fn creature(cv: &mut Canvas, slot: &str, id: &str, mood: Mood, cx: i32, bottom: 
     let hop = if matches!(mood, Mood::Win) { (life * std::f32::consts::TAU * rate).sin().abs() * h as f32 * 0.08 } else { 0.0 };
     let stretch = 1.0 + 0.03 * pulse + 0.06 * sq;
     let hh = (h as f32 * stretch) as i32;
-    crate::assets::draw_char_ex(cv, id, mood.expr(), cx + rec as i32, bottom - hop as i32, hh, alpha, flip);
+    crate::assets::draw_still(cv, id, mood.expr(), cx + rec as i32, bottom - hop as i32, hh, alpha, flip);
 }

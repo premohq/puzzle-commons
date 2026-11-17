@@ -446,4 +446,16 @@ pub fn anim_shots(dir: &str, width: i32) {
         }
     }
     println!("puppet stats (characters, reactions): {:?}", crate::puppet::stats());
+    // the main menu, paced in real time: its host plays her idle clip
+    app.screen = Screen::Main(ListState::default());
+    for f in 0..60 * 4 {
+        let t0 = std::time::Instant::now();
+        app.frame(None, 1.0 / 60.0);
+        if let Some(rest) = std::time::Duration::from_millis(16).checked_sub(t0.elapsed()) {
+            std::thread::sleep(rest);
+        }
+        if f % 20 == 0 {
+            save(&app, dir, &format!("menu_{:04}", f));
+        }
+    }
 }
