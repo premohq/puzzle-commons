@@ -635,7 +635,6 @@ impl App {
         let msg = "Press Enter or Start";
         let pw = Canvas::text_wb(msg, 3, Weight::Display) + 72;
         self.cv.glass_ex(640 - pw / 2, 572, pw, 60, 30, &ui::ACCENT);
-        self.cv.glow(640.0, 602.0, pw as f32 * 0.45, l.accent, a / 6);
         ui::headline(&mut self.cv, 640 - (pw - 72) / 2, 582, msg, 3, crate::gfx::mix(0xFFFF_FFFF, l.accent, 255 - a), 255);
         ui::prompts(&mut self.cv, &l, &[("Enter / A", "Play"), ("Esc / B", "Quit")]);
         if nav.ok || nav.click {

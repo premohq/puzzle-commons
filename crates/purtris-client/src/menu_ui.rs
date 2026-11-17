@@ -50,6 +50,8 @@ const SHEAR: f32 = 0.035;
 pub struct TileArt {
     pub width: i32,
     pub tiles: Vec<(Canvas, Canvas)>,
+    /// the page banner, painted once (layout origin at 0, 0)
+    pub banner: Canvas,
 }
 
 /// A white cloud bubble with a dark outline, sized around a `w` x `h` label at (x, y).
@@ -121,7 +123,10 @@ impl App {
                 let b = self.paint_tile(i, t, k, true, &mut sprites);
                 tiles.push((a, b));
             }
-            self.menu_art = Some(TileArt { width, tiles });
+            let mut b = Canvas::new((560.0 * k).ceil() as i32, (150.0 * k).ceil() as i32);
+            b.k = k;
+            banner(&mut b, "Main Menu");
+            self.menu_art = Some(TileArt { width, tiles, banner: b });
         }
         self.menu_art.as_ref().unwrap()
     }
@@ -295,8 +300,6 @@ impl App {
         if moved {
             self.sfx(crate::audio::Sfx::Menu);
         }
-        // ---- banner
-        banner(&mut self.cv, &l, "Main Menu", t);
         // the player chip
         {
             let who = self.card.name.clone();
@@ -316,6 +319,7 @@ impl App {
         let bob = if motion { ((t * 3.0).sin() * 1.5) as i32 } else { 0 };
         self.tile_art();
         let art = self.menu_art.take().unwrap();
+        self.cv.blit(&art.banner, 0, 0, 255);
         for i in (0..n).filter(|&i| i != cat).chain(std::iter::once(cat)) {
             let tl = &TILES[i];
             let (img, dy) = if i == cat { (&art.tiles[i].1, -(6.0 * pop) as i32 + bob) } else { (&art.tiles[i].0, 0) };
@@ -386,11 +390,11 @@ impl App {
 }
 
 /// The slanted page banner: a starburst, a ribbon with halftone, chunky yellow lettering.
-fn banner(cv: &mut Canvas, _l: &crate::theme::Look, text: &str, t: f32) {
+fn banner(cv: &mut Canvas, text: &str) {
     let ink = 0xFF3B_1030;
     // starburst behind the left end
     let (sx, sy) = (70.0f32, 66.0f32);
-    let spin = if ui::frame().motion { t * 0.25 } else { 0.0 };
+    let spin = 0.3;
     let pts = 14;
     for i in 0..pts {
         let a0 = spin + i as f32 / pts as f32 * std::f32::consts::TAU;

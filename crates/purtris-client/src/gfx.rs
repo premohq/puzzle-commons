@@ -253,7 +253,30 @@ static BACKDROP_IDS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64
 struct ShapeCache {
     glass: std::collections::HashMap<[i64; 12], std::sync::Arc<Vec<u32>>>,
     shadows: std::collections::HashMap<[i32; 5], std::sync::Arc<Vec<u8>>>,
+    /// per-shape edge geometry of glass (independent of what is behind it)
+    geo: std::collections::HashMap<[i64; 6], std::sync::Arc<GlassGeo>>,
     pixels: usize,
+}
+
+/// One edge pixel of a glass shape: where it samples (relative to itself), its red/blue
+/// split, how much of the clear rim shows, its bevel shade, its highlight and its coverage.
+#[derive(Clone, Copy)]
+struct GeoPx {
+    lx: i32,
+    ox: f32,
+    oy: f32,
+    cx: f32,
+    cy: f32,
+    clear: u32,
+    shade: u32,
+    add: u32,
+    cov: u32,
+    plain: bool,
+}
+/// The edge pixels of a glass shape, row by row (`rows[j]` is a range into `px`).
+struct GlassGeo {
+    rows: Vec<(u32, u32)>,
+    px: Vec<GeoPx>,
 }
 thread_local! {
     static SHAPES: std::cell::RefCell<ShapeCache> = std::cell::RefCell::new(ShapeCache::default());
@@ -264,6 +287,7 @@ fn shape_cache_room(add: usize) {
         if c.pixels + add > 12_000_000 {
             c.glass.clear();
             c.shadows.clear();
+            c.geo.clear();
             c.pixels = 0;
         }
         c.pixels += add;
@@ -573,8 +597,11 @@ impl Canvas {
             let ly = (py - y) as f32 + 0.5;
             let c = mix(top, bot, ((ly / hf) * 255.0) as u32);
             let qy = (ly - hf / 2.0).abs() - (hf / 2.0 - rf);
-            let full = ly < rf + band as f32 || ly > hf - rf - band as f32;
-            let spans: [(i32, i32); 2] = if full { [(x, x + w), (0, 0)] } else { [(x, x + band.max(r)), (x + w - band.max(r), x + w)] };
+            // only the straight top and bottom edges need whole rows; elsewhere the outline lies
+            // within the corner radius (plus its width) of either end
+            let edge_row = ly < th + 1.5 || ly > hf - th - 1.5;
+            let side = (r + band).min(w / 2);
+            let spans: [(i32, i32); 2] = if edge_row { [(x, x + w), (0, 0)] } else { [(x, x + side), (x + w - side, x + w)] };
             for (a0, a1) in spans {
                 for px in a0.max(cx0)..a1.min(cx1) {
                     let lx = (px - x) as f32 + 0.5;
@@ -915,8 +942,7 @@ impl Canvas {
             return;
         }
         if g.shadow > 0 {
-            self.soft_shadow(x, y + 2, w, h, r, 18, g.shadow);
-            self.soft_shadow(x, y, w, h, r, 4, g.shadow / 2 + 20);
+            self.soft_shadow(x, y + 2, w, h, r, 14, g.shadow);
         }
         if self.flat_glass {
             // cheap look (Potato): an opaque card with a lit top edge and a dark lip
@@ -997,10 +1023,91 @@ impl Canvas {
         let hl_w = 1.5 * k;
         let glow_w = 9.0 * k;
         let frost = g.frost;
+        let gkey: [i64; 6] = [w as i64, h as i64, r as i64, (k * 1000.0) as i64, g.rim as i64, (g.lens * 1000.0) as i64];
+        let geo = match SHAPES.with(|c| c.borrow().geo.get(&gkey).cloned()) {
+            Some(gg) => gg,
+            None => {
+                let mut rows = Vec::with_capacity(h as usize);
+                let mut pxs: Vec<GeoPx> = Vec::new();
+                for j in 0..h {
+                    let start = pxs.len() as u32;
+                    let ly = j as f32 + 0.5;
+                    let qy = (ly - hf / 2.0).abs() - (hf / 2.0 - rf);
+                    let qny = (ly - hf / 2.0).abs() - (hf / 2.0 - rn);
+                    let sheen_row = (1.0 - ly / (hf * 0.5).max(1.0)).max(0.0);
+                    let sheen_row = sheen_row * sheen_row * 26.0;
+                    // columns that can be edge pixels on this row
+                    let inner = ly > edge + 1.0 && ly < hf - edge - 1.0;
+                    let corner_rows = ly < rf.max(edge) || ly > hf - rf.max(edge);
+                    let span = if inner { (if corner_rows { edge.max(rf) } else { edge } + 2.0).ceil() as i32 } else { w };
+                    let cols: Vec<i32> = if span * 2 >= w { (0..w).collect() } else { (0..span).chain(w - span..w).collect() };
+                    for lxi in cols {
+                        let lx = lxi as f32 + 0.5;
+                        let qx = (lx - wf / 2.0).abs() - (wf / 2.0 - rf);
+                        let d = if qx > 0.0 && qy > 0.0 { rf - (qx * qx + qy * qy).sqrt() } else { rf - qx.max(qy) };
+                        if d <= -0.5 {
+                            continue;
+                        }
+                        let cov = (d + 0.5).min(1.0);
+                        let d = d.max(0.0);
+                        let sheen = sheen_row * (1.15 - 0.5 * lx / wf);
+                        let cova = if cov >= 1.0 { 255 } else { (cov * 255.0) as u32 };
+                        if d >= edge {
+                            pxs.push(GeoPx { lx: lxi, ox: 0.0, oy: 0.0, cx: 0.0, cy: 0.0, clear: 0, shade: 0, add: sheen as u32, cov: cova, plain: true });
+                            continue;
+                        }
+                        let qnx = (lx - wf / 2.0).abs() - (wf / 2.0 - rn);
+                        let (mut nx, mut ny) = if qnx > 0.0 && qny > 0.0 {
+                            let l = (qnx * qnx + qny * qny).sqrt().max(1e-3);
+                            (qnx / l, qny / l)
+                        } else if qnx > qny {
+                            (1.0, 0.0)
+                        } else {
+                            (0.0, 1.0)
+                        };
+                        if lx < wf / 2.0 {
+                            nx = -nx;
+                        }
+                        if ly < hf / 2.0 {
+                            ny = -ny;
+                        }
+                        let t = 1.0 - d / edge;
+                        let t2 = t * t;
+                        let disp = lens * t2 * t;
+                        let cs = if t > 0.45 { ca * (t - 0.45) / 0.55 } else { 0.0 };
+                        let clear = if t > 0.2 {
+                            let u = (t - 0.2) / 0.8;
+                            (u * u * 170.0) as u32
+                        } else {
+                            0
+                        };
+                        let s = nx * lx_ + ny * ly_;
+                        let spec = s.max(0.0);
+                        let bounce = (-s).max(0.0);
+                        let bev = t2 * t.sqrt();
+                        let shade = ((bev * (26.0 + 70.0 * bounce) * (1.0 - spec)) as u32).min(200);
+                        let hl = ((hl_w + 0.6 - d) / hl_w).clamp(0.0, 1.0);
+                        let gl = (1.0 - d / glow_w).max(0.0);
+                        let gl = gl * gl;
+                        let spec2 = spec * spec;
+                        let b2 = bounce * bounce;
+                        let add = hl * (64.0 + 191.0 * spec2.sqrt() * spec + 110.0 * b2) * rim_k + gl * (70.0 * spec2 + 22.0 * b2) * rim_k + bev * 64.0 * spec2 * rim_k + sheen;
+                        pxs.push(GeoPx { lx: lxi, ox: nx * disp, oy: ny * disp, cx: nx * cs, cy: ny * cs, clear, shade, add: (add as u32).min(255), cov: cova, plain: false });
+                    }
+                    rows.push((start, pxs.len() as u32));
+                }
+                let gg = std::sync::Arc::new(GlassGeo { rows, px: pxs });
+                shape_cache_room(gg.px.len() * 2);
+                SHAPES.with(|c| {
+                    c.borrow_mut().geo.insert(gkey, gg.clone());
+                });
+                gg
+            }
+        };
         let shade_row = |py: i32, row: &mut [u32]| {
             let ly = (py - y) as f32 + 0.5;
-            let qy = (ly - hf / 2.0).abs() - (hf / 2.0 - rf);
-            let qny = (ly - hf / 2.0).abs() - (hf / 2.0 - rn);
+            let _qy = (ly - hf / 2.0).abs() - (hf / 2.0 - rf);
+            let _qny = (ly - hf / 2.0).abs() - (hf / 2.0 - rn);
             // sheen: a soft lit band across the top that leans to the left
             let sheen_row = (1.0 - ly / (hf * 0.5).max(1.0)).max(0.0);
             let sheen_row = sheen_row * sheen_row * 26.0;
@@ -1038,79 +1145,37 @@ impl Canvas {
                     px += 1;
                 }
             }
-            for px in (x0..ia).chain(ib..x1) {
-                let lx = (px - x) as f32 + 0.5;
-                let qx = (lx - wf / 2.0).abs() - (wf / 2.0 - rf);
-                // signed distance to the edge, positive inside (sqrt only in the corners)
-                let d = if qx > 0.0 && qy > 0.0 { rf - (qx * qx + qy * qy).sqrt() } else { rf - qx.max(qy) };
-                if d <= -0.5 {
+            let j = (py - y) as usize;
+            if j >= geo.rows.len() {
+                return;
+            }
+            let (g0, g1) = geo.rows[j];
+            for gp in &geo.px[g0 as usize..g1 as usize] {
+                let px = x + gp.lx;
+                if px < x0 || px >= x1 || (px >= ia && px < ib) {
                     continue;
                 }
-                let cov = (d + 0.5).min(1.0);
-                let d = d.max(0.0);
-                let sheen = sheen_row * (1.15 - 0.5 * lx / wf);
-                if d >= edge {
-                    let mut c = add_sat(tap(px as f32, py as f32), sheen as u32);
+                let (fx, fy) = (px as f32, py as f32);
+                let c = if gp.plain {
+                    let mut c = tap(fx, fy);
                     if frost > 0 {
                         c = add_sat(c, grain(px, py) & frost);
                     }
-                    row[(px - x0) as usize] = (if cov >= 1.0 { 255 } else { (cov * 255.0) as u32 } << 24) | c;
-                    continue;
-                }
-                // outward normal of the rounder shape
-                let qnx = (lx - wf / 2.0).abs() - (wf / 2.0 - rn);
-                let (mut nx, mut ny) = if qnx > 0.0 && qny > 0.0 {
-                    let l = (qnx * qnx + qny * qny).sqrt().max(1e-3);
-                    (qnx / l, qny / l)
-                } else if qnx > qny {
-                    (1.0, 0.0)
-                } else {
-                    (0.0, 1.0)
-                };
-                if lx < wf / 2.0 {
-                    nx = -nx;
-                }
-                if ly < hf / 2.0 {
-                    ny = -ny;
-                }
-                let t = 1.0 - d / edge;
-                let t2 = t * t;
-                // refraction: sample from outside the rim, compressed toward it
-                let disp = lens * t2 * t;
-                let (bx, by) = (px as f32 + nx * disp, py as f32 + ny * disp);
-                let c = if t > 0.45 {
-                    let cs = ca * (t - 0.45) / 0.55;
-                    let cr = tap(bx + nx * cs, by + ny * cs);
-                    let cg = tap(bx, by);
-                    let cb = tap(bx - nx * cs, by - ny * cs);
-                    (cr & 0xFF0000) | (cg & 0x00FF00) | (cb & 0x0000FF)
-                } else {
-                    tap(bx, by)
-                };
-                let c = if t > 0.2 {
-                    let u = (t - 0.2) / 0.8;
-                    lerp_px(c, tap_clear(bx, by), (u * u * 170.0) as u32)
-                } else {
                     c
+                } else {
+                    let (bx, by) = (fx + gp.ox, fy + gp.oy);
+                    let c = if gp.cx != 0.0 || gp.cy != 0.0 {
+                        let cr = tap(bx + gp.cx, by + gp.cy);
+                        let cg = tap(bx, by);
+                        let cb = tap(bx - gp.cx, by - gp.cy);
+                        (cr & 0xFF0000) | (cg & 0x00FF00) | (cb & 0x0000FF)
+                    } else {
+                        tap(bx, by)
+                    };
+                    let c = if gp.clear > 0 { lerp_px(c, tap_clear(bx, by), gp.clear) } else { c };
+                    lerp_px(c, 0, gp.shade)
                 };
-                // a bevel: the slab's rounded edge catches the light on the lit side and falls
-                // into shadow on the other
-                let s = nx * lx_ + ny * ly_;
-                let spec = s.max(0.0);
-                let bounce = (-s).max(0.0);
-                let bev = t2 * t.sqrt();
-                let shade = (bev * (26.0 + 70.0 * bounce) * (1.0 - spec)) as u32;
-                let c = lerp_px(c, 0, shade.min(200));
-                // highlights: the rim line, its soft glow, the lit bevel, the sheen
-                let hl = ((hl_w + 0.6 - d) / hl_w).clamp(0.0, 1.0);
-                let gl = (1.0 - d / glow_w).max(0.0);
-                let gl = gl * gl;
-                let spec2 = spec * spec;
-                let b2 = bounce * bounce;
-                let add = hl * (64.0 + 191.0 * spec2.sqrt() * spec + 110.0 * b2) * rim_k + gl * (70.0 * spec2 + 22.0 * b2) * rim_k + bev * 64.0 * spec2 * rim_k + sheen;
-                let c = add_sat(c, (add as u32).min(255));
-                let a = if cov >= 1.0 { 255 } else { (cov * 255.0) as u32 };
-                row[(px - x0) as usize] = (a << 24) | c;
+                row[(px - x0) as usize] = (gp.cov << 24) | add_sat(c, gp.add);
             }
         };
         let mut img = vec![0u32; (cw * ch) as usize];
