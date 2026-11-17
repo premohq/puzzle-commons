@@ -64,6 +64,16 @@ fn selectable(r: &Row) -> bool {
 }
 
 pub fn list(cv: &mut Canvas, l: &Look, nav: &Nav, rows: &[Row], s: &mut ListState, g: &ListGeom, t: f32) -> LE {
+    list_impl(cv, l, nav, rows, s, g, t, true)
+}
+
+/// A list drawn straight onto a card the caller has already put down.
+pub fn list_bare(cv: &mut Canvas, l: &Look, nav: &Nav, rows: &[Row], s: &mut ListState, g: &ListGeom, t: f32) -> LE {
+    list_impl(cv, l, nav, rows, s, g, t, false)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn list_impl(cv: &mut Canvas, l: &Look, nav: &Nav, rows: &[Row], s: &mut ListState, g: &ListGeom, t: f32, card: bool) -> LE {
     let mut ev = LE::None;
     if rows.is_empty() {
         return if nav.back { LE::Back } else { LE::None };
@@ -137,7 +147,9 @@ pub fn list(cv: &mut Canvas, l: &Look, nav: &Nav, rows: &[Row], s: &mut ListStat
     }
     // the card behind the rows
     let shown = rows.len().min(s.scroll + g.visible) - s.scroll;
-    cv.glass(g.x - 22, g.y - 16, g.w + 44, shown as i32 * g.row_h + 32, 22, GLASS, GLASS_A);
+    if card {
+        cv.glass(g.x - 22, g.y - 16, g.w + 44, shown as i32 * g.row_h + 32, 22, GLASS, GLASS_A);
+    }
     let sc = g.scale;
     for (vi, k) in (s.scroll..s.scroll + shown).enumerate() {
         let r = &rows[k];

@@ -837,7 +837,8 @@ impl Canvas {
             let ly = (py - y) as f32 + 0.5;
             let qy = (ly - hf / 2.0).abs() - (hf / 2.0 - rf);
             let sheen = ((1.0 - ly / (hf * 0.55)).max(0.0) * 22.0) as u32;
-            let top_half = ly < hf / 2.0;
+            // the light rim fades smoothly from the lit top edge to the shaded bottom edge
+            let rim_hi = (120.0 - 75.0 * (ly / hf).clamp(0.0, 1.0)) as u32;
             // interior span: no lens, rim or coverage (empty near the top and bottom edges)
             let corner_rows = ly < rf || ly > hf - rf;
             let mx = if corner_rows { edge.max(rf) } else { edge } + 1.0;
@@ -888,7 +889,7 @@ impl Canvas {
                     let r1 = (r0 + 1).min(bd.rows as usize - 1);
                     let wb = (((gy - r0 as f32) * 256.0) as u32).min(256);
                     let wa = 256 - wb;
-                    let rim = if d < rim1 { if top_half { 120 } else { 45 } } else if d < rim2 { 26 } else { 0 };
+                    let rim = if d < rim1 { rim_hi } else if d < rim2 { 26 } else { 0 };
                     let add = (sheen + rim).min(255);
                     let ca = (cov * 255.0) as u32;
                     // sample x = px - dx, dx = kk * lens * (w/2 - lx) / (w/2)
@@ -923,7 +924,7 @@ impl Canvas {
                 } else {
                     sample(px as f32, py as f32)
                 };
-                let rim = if d < rim1 { if top_half { 120 } else { 45 } } else if d < rim2 { 26 } else { 0 };
+                let rim = if d < rim1 { rim_hi } else if d < rim2 { 26 } else { 0 };
                 let c = add_sat(s, (sheen + rim).min(255));
                 let a = if cov >= 1.0 { 255 } else { (cov * 255.0) as u32 };
                 row[(px - x0) as usize] = (a << 24) | c;

@@ -811,12 +811,14 @@ impl App {
         for (i, (ic, label, _)) in items.iter().enumerate() {
             let rel = i as f32 - off;
             let y = if rel < -0.01 { bar_y as f32 - 70.0 + rel * row_h * 0.8 } else { bar_y as f32 + 112.0 + rel * row_h };
-            if !(-40.0..760.0).contains(&y) {
+            if !(-40.0..620.0).contains(&y) {
                 continue;
             }
             let is_sel = i == sel;
             let d = rel.abs().min(1.0);
-            let a = if rel < -0.01 { 90 } else { (255.0 - 90.0 * d) as u32 };
+            // rows fade out as they near the description strip at the bottom
+            let fade = ((612.0 - y) / 70.0).clamp(0.0, 1.0);
+            let a = ((if rel < -0.01 { 90.0 } else { 255.0 - 90.0 * d }) * fade) as u32;
             let isz = if is_sel { 52 } else { 38 };
             if is_sel {
                 let tw = Canvas::text_wb(label, 3, Weight::Bold) + isz + 60;
@@ -1380,9 +1382,9 @@ impl App {
         let l = look(self.st.theme);
         ui::title(&mut self.cv, "SOLO", "Objective modes. Records are kept on this machine.", &l);
         let modes: [(Mode, Profile, &str); 9] = [
-            (Mode::QuadSprint, Profile::QuadGuideline, "QUAD SPRINT: clear 40 lines"),
-            (Mode::QuadTwenty, Profile::QuadGuideline, "QUAD TWENTY: clear 20 lines"),
-            (Mode::QuadMarathon, Profile::QuadGuideline, "QUAD MARATHON: until you top out"),
+            (Mode::QuadSprint, Profile::QuadGuideline, "Quad sprint  -  clear 40 lines"),
+            (Mode::QuadTwenty, Profile::QuadGuideline, "Quad twenty  -  clear 20 lines"),
+            (Mode::QuadMarathon, Profile::QuadGuideline, "Quad marathon  -  until you top out"),
             (Mode::ChainEndless, Profile::ChainTsu, "CHAIN ENDLESS"),
             (Mode::CapsuleLevelRun, Profile::CapsuleNes, "CAPSULE LEVEL RUN"),
             (Mode::PanelEndless, Profile::PanelPdp, "PANEL ENDLESS RISE"),
@@ -1564,15 +1566,15 @@ impl App {
         crate::assets::draw_char(&mut self.cv, "mira", expr, 190, 712 + bob, 640, 255);
         // lesson title strip
         let title = ui::title_case(le.title);
-        self.cv.glass(360, 24, 880, 76, 28, ui::GLASS, 190);
+        self.cv.glass(360, 24, 790, 76, 28, ui::GLASS, 190);
         self.cv.text_weight(392, 36, &title, 3, 0xFFFF_FFFF, 255, Weight::Black);
         let sub = format!("{}  /  {}", ui::title_case(le.track), ui::title_case(le.tier));
         self.cv.text_s(392, 72, &sub, 1, l.dim);
         // Mira's speech bubble with the current part
-        self.cv.glass(360, 118, 880, 300, 30, ui::GLASS, 205);
+        self.cv.glass(360, 118, 790, 300, 30, ui::GLASS, 205);
         self.cv.tri([(372.0, 380.0), (344.0, 406.0), (380.0, 400.0)], 0xFF2A_3456, 200);
         self.cv.text_weight(392, 136, &format!("{}.  {}", page + 1, head), 3, l.accent, 255, Weight::Black);
-        self.cv.text_wrap(392, 186, 820, body, 2, l.text);
+        self.cv.text_wrap(392, 186, 730, body, 2, l.text);
         for k in 0..parts.len() {
             let on = k == page;
             self.cv.circle(392.0 + k as f32 * 22.0, 398.0, if on { 6.0 } else { 4.0 }, if on { l.accent } else { 0xFF5A_6488 }, 255);
@@ -1966,7 +1968,7 @@ impl App {
         } else if crowd {
             (205 + sx, 44, 870, ah)
         } else {
-            (250 + sx, 44, 780, ah)
+            (215 + sx, 44, 850, ah)
         };
         if flank {
             let shown: Vec<usize> = if crowd { vec![active[0], *active.iter().find(|&&i| !g.humans[i]).unwrap_or(&active[1])] } else { active.clone() };
@@ -2046,17 +2048,25 @@ impl App {
             self.cv.text_center(640, 40, t, 2, l.accent);
         }
         if g.paused {
-            self.cv.rect_a(0, 0, 1280, 720, 0xFF00_0000, 140);
-            let rows = vec![Row::act("RESUME"), Row::act("RESTART"), Row::act(format!("Theme: {}", self.st.theme.name())), Row::act("QUIT TO MENU")];
+            use crate::font::Weight;
+            self.cv.rect_a(0, 0, 1280, 720, 0xFF02_0410, 165);
+            let rows = vec![Row::act("Resume"), Row::act("Restart"), Row::act(format!("Theme: {}", self.st.theme.name())), Row::act("Quit to menu")];
             let mut ls = ListState { sel: g.pause_sel, scroll: 0 };
-            ui::panel(&mut self.cv, 440, 220, 400, 280, &l);
-            self.cv.text_center(640, 236, "PAUSED", 3, l.accent);
-            let gg = ListGeom { x: 470, y: 290, w: 340, row_h: 46, visible: 4, scale: 2 };
+            let ch = if g.training { 338 } else { 316 };
+            let cy = 360 - ch / 2;
+            self.cv.glass(450, cy, 380, ch, 28, ui::GLASS, 215);
+            let pw = Canvas::text_wb("Paused", 4, Weight::Black);
+            self.cv.text_weight(640 - pw / 2 + 2, cy + 20, "Paused", 4, 0xFF00_0000, 120, Weight::Black);
+            self.cv.text_weight(640 - pw / 2, cy + 18, "Paused", 4, 0xFFFF_FFFF, 255, Weight::Black);
+            let sub = format!("{}   {}", ui::title_case(g.m.header.mode.name()), fmt_time(g.m.tick));
+            self.cv.text_center(640, cy + 72, &sub, 1, l.dim);
+            self.cv.rect_a(480, cy + 94, 320, 1, 0xFFFF_FFFF, 40);
+            let gg = ListGeom { x: 486, y: cy + 104, w: 308, row_h: 44, visible: 4, scale: 2 };
             let nav2 = Nav { back: false, ..*nav };
-            let ev = list(&mut self.cv, &l, &nav2, &rows, &mut ls, &gg, self.t);
+            let ev = ui::list_bare(&mut self.cv, &l, &nav2, &rows, &mut ls, &gg, self.t);
             g.pause_sel = ls.sel;
             if g.training {
-                self.cv.text_center(640, 470, "O: STEP ONE TICK   BACKSPACE: REWIND", 1, l.dim);
+                self.cv.text_center(640, cy + ch - 30, "O  step one tick      Backspace  rewind", 1, l.dim);
             }
             let resume = !just_paused && (nav.back || (self.input.pause_pressed() && !nav.ok));
             match ev {
@@ -2312,73 +2322,89 @@ impl App {
         if let Some(rec) = &r.new_record {
             self.cv.text_center(640, 100, &ui::nice(rec), 2, l.good);
         }
-        // seat table in fixed columns
-        ui::panel(&mut self.cv, 40, 130, 700, 300, &l);
-        let cols: [(&str, i32, bool); 7] = [("Seat", 84, false), ("Style", 230, false), ("Sent", 400, true), ("Recv", 470, true), ("Chain", 545, true), ("KO", 600, true), ("Score", 712, true)];
+        // seat table: a row per seat, sized to the seats that played; the winners glow
+        use crate::font::Weight;
+        let seats: Vec<usize> = (0..6).filter(|&i| g.m.seats[i].board.is_some()).collect();
+        let rh = if seats.len() <= 2 { 56 } else if seats.len() <= 4 { 44 } else { 38 };
+        let th = 52 + rh * seats.len() as i32 + 12;
+        ui::panel(&mut self.cv, 40, 130, 700, th, &l);
+        let cols: [(&str, i32, bool); 7] = [("Seat", 126, false), ("Style", 270, false), ("Sent", 430, true), ("Recv", 500, true), ("Chain", 570, true), ("KO", 625, true), ("Score", 712, true)];
         for (name, x, right) in cols {
-            if right {
-                self.cv.text_right(x, 145, name, 2, l.accent);
-            } else {
-                self.cv.text_s(x, 145, name, 2, l.accent);
-            }
+            let w = Canvas::text_wb(name, 1, Weight::Bold);
+            self.cv.text_weight(if right { x - w } else { x }, 150, name, 1, l.dim, 255, Weight::Bold);
         }
-        let mut y = 182;
-        for i in 0..6 {
+        self.cv.rect_a(60, 172, 660, 1, 0xFFFF_FFFF, 40);
+        let mut y = 178;
+        for &i in &seats {
             let s = &g.m.seats[i];
-            if let Some(b) = &s.board {
-                let c = if g.m.is_winner(i) { l.good } else { l.text };
-                // each row leads with that seat's character, cheering or sulking
-                if self.st.characters {
-                    let member = &crate::cast::CAST[g.chars[i].min(crate::cast::CAST.len() - 1)];
-                    let expr = if g.m.is_winner(i) { "delighted" } else { "sad" };
-                    self.cv.circle(44.0 + 14.0, y as f32 + 11.0, 16.0, member.color, 255);
-                    self.cv.set_clip(40, y - 14, 36, 42);
-                    crate::assets::draw_portrait(&mut self.cv, member.id, expr, 38, y - 8, 40, 255, false);
-                    self.cv.reset_clip();
-                }
-                let vals = [g.names[i].chars().take(12).collect::<String>(), ui::title_case(b.style().name()), s.stats.sent.to_string(), s.stats.received.to_string(), s.stats.max_chain.to_string(), s.kos.to_string(), b.score().to_string()];
-                for (k, (_, x, right)) in cols.iter().enumerate() {
-                    if *right {
-                        self.cv.text_right(*x, y, &vals[k], 2, c);
-                    } else {
-                        self.cv.text_s(*x, y, &vals[k], 2, c);
-                    }
-                }
-                y += 36;
+            let b = s.board.as_ref().unwrap();
+            let win = g.m.is_winner(i);
+            if win {
+                self.cv.round_rect(54, y + 3, 672, rh - 6, (rh - 6) / 2, l.good, 34);
             }
-        }
-        // the cast reacts: Mira cheers or pouts; in story mode the world's rival does the opposite
-        if self.st.characters {
-            if let Origin::Story { world, .. } = g.origin {
-                let (rid, _) = crate::assets::rival(world);
-                crate::assets::draw_char(&mut self.cv, rid, if won { "sad" } else { "delighted" }, 1010, 668, 220, 255);
+            let ty = y + (rh - Canvas::px(2) as i32) / 2;
+            let c = if win { l.good } else { l.text };
+            // each row leads with that seat's character, cheering or sulking
+            if self.st.characters {
+                let member = &crate::cast::CAST[g.chars[i].min(crate::cast::CAST.len() - 1)];
+                let expr = if win { "delighted" } else { "sad" };
+                let ps = rh - 8;
+                let (px, py) = (66, y + 4);
+                self.cv.circle((px + ps / 2) as f32, (py + ps / 2) as f32, ps as f32 / 2.0, member.color, 255);
+                self.cv.set_clip(px, py - ps / 2, ps, ps + ps / 2);
+                crate::assets::draw_portrait(&mut self.cv, member.id, expr, px - ps / 8, py - ps / 6, ps + ps / 4, 255, false);
+                self.cv.reset_clip();
             }
+            let accent = match b.style() {
+                purtris_sim::Style::Quad => crate::theme::CYAN,
+                purtris_sim::Style::Chain => crate::theme::GREEN,
+                purtris_sim::Style::Capsule => crate::theme::PINK,
+                purtris_sim::Style::Panel => crate::theme::YELLOW,
+            };
+            let name = ui::nice(&g.names[i]);
+            self.cv.text_weight(cols[0].1, ty, &name, 2, c, 255, if win { Weight::Bold } else { Weight::Regular });
+            let sname = ui::title_case(b.style().name());
+            let sw = Canvas::text_wb(&sname, 1, Weight::Bold) + 16;
+            self.cv.round_rect(cols[1].1, y + rh / 2 - 11, sw, 22, 11, accent, 230);
+            self.cv.text_weight(cols[1].1 + 8, y + rh / 2 - 10, &sname, 1, 0xFF0A_0E1E, 255, Weight::Bold);
+            let vals = [s.stats.sent.to_string(), s.stats.received.to_string(), s.stats.max_chain.to_string(), s.kos.to_string(), b.score().to_string()];
+            for (k, v) in vals.iter().enumerate() {
+                let (_, x, _) = cols[k + 2];
+                let w = Canvas::text_wb(v, 2, Weight::Bold);
+                self.cv.text_weight(x - w, ty, v, 2, c, 255, Weight::Bold);
+            }
+            y += rh;
         }
+        let mut below = 130 + th + 16;
         // XP: the bar fills from where you were to where you are now
         if r.gain.xp > 0 {
-            use crate::font::Weight;
             let gn = &r.gain;
             let lv = self.ranks.level;
             let need = crate::ranks::xp_to_next(lv);
             let frac = if lv >= crate::ranks::MAX_LEVEL { 1.0 } else { self.ranks.xp as f32 / need as f32 };
-            crate::ranks_ui::level_badge(&mut self.cv, 74, 452, 26, lv, self.ranks.prestige);
-            self.cv.text_weight(110, 432, &format!("+{} XP", gn.xp), 2, l.accent, 255, Weight::Black);
+            let xy = below;
+            ui::panel(&mut self.cv, 40, xy, 700, 74, &l);
+            crate::ranks_ui::level_badge(&mut self.cv, 84, xy + 37, 26, lv, self.ranks.prestige);
+            self.cv.text_weight(126, xy + 10, &format!("+{} XP", gn.xp), 2, l.accent, 255, Weight::Black);
             let why: Vec<String> = gn.reasons.iter().take(4).map(|(w, n)| format!("{} {}", w, n)).collect();
-            self.cv.text_s(230, 438, &why.join("   "), 1, l.dim);
-            self.cv.round_rect(110, 462, 610, 10, 5, 0xFF2A_3150, 255);
-            self.cv.round_rect(110, 462, ((610.0 * frac) as i32).max(10), 10, 5, l.accent, 255);
+            let why = why.join("    ");
+            self.cv.text_right(716, xy + 15, &why, 1, l.dim);
+            self.cv.round_rect(126, xy + 42, 590, 10, 5, 0xFF2A_3150, 255);
+            self.cv.round_rect(126, xy + 42, ((590.0 * frac) as i32).max(10), 10, 5, l.accent, 255);
             if gn.levels_gained > 0 {
-                let msg = format!("Level up! Level {}  {}", lv, crate::ranks::title(lv));
-                self.cv.text_weight(110, 474, &msg, 1, l.good, 255, Weight::Bold);
+                let msg = format!("Level up!  Level {}  {}", lv, crate::ranks::title(lv));
+                self.cv.text_weight(126, xy + 55, &msg, 1, l.good, 255, Weight::Bold);
             } else if let Some((b, k)) = gn.placed.first() {
-                self.cv.text_weight(110, 474, &format!("#{} on the {} leaderboard", k, b), 1, l.good, 255, Weight::Bold);
+                self.cv.text_weight(126, xy + 55, &format!("#{} on the {} leaderboard", k, b), 1, l.good, 255, Weight::Bold);
             }
+            below = xy + 74 + 16;
         }
+        let _ = below;
         // objectives and analyzer (or match notes)
         ui::panel(&mut self.cv, 770, 130, 470, 540, &l);
         let mut y = 146;
         if r.objectives.is_empty() && r.findings.is_empty() {
-            self.cv.text_s(790, y, "MATCH NOTES", 2, l.accent);
+            self.cv.text_weight(794, y + 4, "MATCH NOTES", 1, l.dim, 255, crate::font::Weight::Bold);
             y += 30;
             let notes = [
                 format!("Attack path: {}", if g.m.cross { "cross (gauge)" } else { "authentic (native units)" }),
@@ -2422,7 +2448,20 @@ impl App {
         if next_stage {
             rows.insert(0, Row::act("NEXT RIVAL"));
         }
-        let gg = ListGeom { x: 60, y: 512, w: 660, row_h: 38, visible: 5, scale: 2 };
+        // the cast reacts in the notes card: in the story the world's rival, otherwise the winner
+        if self.st.characters && y < 440 {
+            let (id, expr) = if let Origin::Story { world, .. } = g.origin {
+                (crate::assets::rival(world).0, if won { "sad" } else { "delighted" })
+            } else {
+                let k = (0..6).find(|&i| g.m.seats[i].board.is_some() && g.m.is_winner(i)).unwrap_or(0);
+                (crate::cast::CAST[g.chars[k].min(crate::cast::CAST.len() - 1)].id, if g.m.is_winner(k) || won { "delighted" } else { "sad" })
+            };
+            let bob = if self.st.reduce_motion { 0 } else { ((self.t * 1.6).sin() * 3.0) as i32 };
+            self.cv.set_clip(770, 130, 470, 540);
+            crate::assets::draw_char(&mut self.cv, id, expr, 1005, 662 + bob, 250, 255);
+            self.cv.reset_clip();
+        }
+        let gg = ListGeom { x: 60, y: 654 - rows.len() as i32 * 38, w: 660, row_h: 38, visible: 6, scale: 2 };
         let ev = list(&mut self.cv, &l, nav, &rows, &mut r.list, &gg, self.t);
         if let Some(p) = &r.saved {
             self.cv.text_s(60, 680, p, 1, l.dim);

@@ -1,4 +1,5 @@
-//! Blender-rendered art (tools/blender/export_cast.py), embedded in the binary.
+//! Game art embedded in the binary: piece sprites (tools/sprites/pieces.py) and the Blender-rendered
+//! cast, logo and icons (tools/blender/).
 //! TGA decoding and resampling are ours. Missing art falls back to the procedural painter.
 
 use crate::gfx::Canvas;

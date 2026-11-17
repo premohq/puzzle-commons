@@ -13,10 +13,12 @@ fn save(app: &App, dir: &str, name: &str) {
 }
 
 fn match_shot(app: &mut App, dir: &str, name: &str, h: MatchHeader, ticks: u32) {
-    let names: [String; 6] = std::array::from_fn(|i| if h.seats[i].kind == SeatKind::Closed { String::new() } else { format!("CPU{}", i + 1) });
-    let mut g = Game::new(h, [None; 6], names, Origin::Replay, true).unwrap();
+    // seats are named after the cast members on their plates; no training bar, as in a real match
+    let chars = [0, 2, 3, 4, 5, 7];
+    let names: [String; 6] = std::array::from_fn(|i| if h.seats[i].kind == SeatKind::Closed { String::new() } else { crate::cast::CAST[chars[i]].name.to_string() });
+    let mut g = Game::new(h, [None; 6], names, Origin::Replay, false).unwrap();
     g.humans[0] = true;
-    g.chars = [0, 2, 3, 4, 5, 7];
+    g.chars = chars;
     for _ in 0..ticks / 60 {
         g.fast_forward(60, &app.input, &app.st, &app.synth, &mut app.r);
         app.screen = Screen::Play(Box::new(std::mem::replace(&mut g, Game::new(h, [None; 6], Default::default(), Origin::Replay, true).unwrap())));

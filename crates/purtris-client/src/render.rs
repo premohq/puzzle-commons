@@ -44,6 +44,10 @@ pub struct Geom {
     pub fy: i32,
     pub cols: i32,
     pub rows: i32,
+    /// width of the side column, how far the nameplate floats above the well, its height
+    pub side: i32,
+    pub lift: i32,
+    pub plate_h: i32,
 }
 
 pub struct Scene {
@@ -230,85 +234,140 @@ impl Fx {
     }
 }
 
-/// Board area rectangles for the active seats.
+fn style_dims(s: Style) -> (i32, i32) {
+    match s {
+        Style::Quad => (10, 20),
+        Style::Chain => (6, 12),
+        Style::Capsule => (8, 16),
+        Style::Panel => (6, 12),
+    }
+}
+/// Width of the side column (Next, Hold, counters) for a board `bw` wide.
+fn side_w(bw: i32) -> i32 {
+    (bw * 34 / 100).max(46)
+}
+/// Space kept left and right of the well: garbage meter (and Quad's Hold) | the side column.
+fn gutters(style: Style, bw: i32) -> (i32, i32) {
+    let sw = side_w(bw);
+    (26 + if style == Style::Quad { sw + 6 } else { 0 }, 18 + sw + 2)
+}
+/// Space kept above and below the well, the nameplate height and its lift above the well.
+/// When any Quad board plays, every plate is lifted clear of Quad's two spawn rows so the
+/// plates line up across the match.
+fn vert(bw: i32, any_quad: bool) -> (i32, i32, i32, i32) {
+    let big = bw >= 200;
+    let plate_h = if big { 50 } else { 34 };
+    let pop = if big { 26 } else { 16 };
+    let lift = if any_quad { bw / 5 + 6 } else { 14 };
+    (pop + plate_h + lift, 8 + 8 + if big { 30 } else { 20 } + 4, plate_h, lift)
+}
+fn block_w(style: Style, bw: i32) -> i32 {
+    let (l, r) = gutters(style, bw);
+    l + bw + r
+}
+fn block_h(bw: i32, any_quad: bool) -> i32 {
+    let (top, bot, _, _) = vert(bw, any_quad);
+    top + bw * 2 + bot
+}
+fn gcd(a: i32, b: i32) -> i32 {
+    if b == 0 { a } else { gcd(b, a % b) }
+}
+
+/// Board area rectangles for the active seats. Every style's well is twice as tall as it is
+/// wide, so boards of one size class come out the same size whatever their style.
 pub fn layout(m: &Match, humans: &[bool; 6], area: (i32, i32, i32, i32)) -> [Geom; 6] {
     let mut out = [Geom::default(); 6];
     let active: Vec<usize> = (0..6).filter(|&i| m.seats[i].board.is_some()).collect();
     let n = active.len();
+    if n == 0 {
+        return out;
+    }
     let (ax, ay, aw, ah) = area;
-    let mut rects: Vec<(usize, (i32, i32, i32, i32))> = Vec::new();
+    let style = |i: usize| m.seats[i].cfg.profile.style();
+    let any_quad = active.iter().any(|&i| style(i) == Style::Quad);
     let nh = active.iter().filter(|&&i| humans[i]).count();
+    // (seat, block x, block y, board width)
+    let mut placed: Vec<(usize, i32, i32, i32)> = Vec::new();
     if n <= 4 {
-        // Width follows what each style needs, so cells come out about the same size.
-        let need = |i: usize| match m.seats[i].cfg.profile.style() {
-            Style::Quad => 19.2,
-            Style::Chain => 10.4,
-            Style::Capsule => 12.2,
-            Style::Panel => 10.2,
+        let scale = |i: usize| if humans[i] && n > 2 && nh < n { 1.3f32 } else { 1.0 };
+        const GAP: i32 = 14;
+        let fits = |bws: &[i32]| {
+            let tw: i32 = active.iter().zip(bws).map(|(&i, &b)| block_w(style(i), b)).sum::<i32>() + GAP * (n as i32 - 1);
+            tw <= aw && bws.iter().all(|&b| block_h(b, any_quad) <= ah)
         };
-        let weights: Vec<f32> = active.iter().map(|&i| need(i) * if humans[i] && n > 2 { 1.35 } else { 1.0 }).collect();
-        let tot: f32 = weights.iter().sum();
-        let mut x = ax as f32;
-        for (k, &i) in active.iter().enumerate() {
-            let w = aw as f32 * weights[k] / tot;
-            rects.push((i, (x as i32, ay, w as i32, ah)));
-            x += w;
+        let solve = |snap: &dyn Fn(usize, f32) -> i32| -> Vec<i32> {
+            let mut b = 420.0f32;
+            loop {
+                let bws: Vec<i32> = active.iter().map(|&i| snap(i, b)).collect();
+                if fits(&bws) || b <= 40.0 {
+                    return bws;
+                }
+                b -= 1.0;
+            }
+        };
+        let free = solve(&|i, b| {
+            let c = style_dims(style(i)).0;
+            ((b * scale(i)) as i32 / c).max(4) * c
+        });
+        let mut bws = free.clone();
+        if active.iter().all(|&i| scale(i) == 1.0) {
+            // one size class: snap to a width every style in the match divides evenly
+            let l = active.iter().fold(1, |l, &i| {
+                let c = style_dims(style(i)).0;
+                l / gcd(l, c) * c
+            });
+            let even = solve(&|_, b| ((b as i32) / l).max(1) * l);
+            let best = *free.iter().max().unwrap();
+            if fits(&even) && even[0] * 10 >= best * 9 {
+                bws = even;
+            }
         }
-    } else if nh == 1 {
-        let hi = *active.iter().find(|&&i| humans[i]).unwrap();
-        let lw = aw * 2 / 5;
-        rects.push((hi, (ax, ay, lw, ah)));
-        let others: Vec<usize> = active.iter().copied().filter(|&i| i != hi).collect();
-        let cols = 3;
-        let rows = (others.len() as i32 + cols - 1) / cols;
-        let cw = (aw - lw) / cols;
-        let chh = ah / rows.max(1);
-        for (k, &i) in others.iter().enumerate() {
-            let c = k as i32 % cols;
-            let r = k as i32 / cols;
-            rects.push((i, (ax + lw + c * cw, ay + r * chh, cw, chh)));
+        let total: i32 = active.iter().zip(&bws).map(|(&i, &b)| block_w(style(i), b)).sum();
+        let gap = if n > 1 { ((aw - total) / n as i32).clamp(0, 90) } else { 0 };
+        let mut x = ax + (aw - total - gap * (n as i32 - 1)) / 2;
+        for (&i, &bw) in active.iter().zip(&bws) {
+            placed.push((i, x, ay + (ah - block_h(bw, any_quad)) / 2, bw));
+            x += block_w(style(i), bw) + gap;
         }
     } else {
-        let cols = 3;
-        let cw = aw / cols;
-        let chh = ah / 2;
-        let mut order = active.clone();
-        order.sort_by_key(|&i| !humans[i]);
-        for (k, &i) in order.iter().enumerate() {
-            let c = k as i32 % cols;
-            let r = k as i32 / cols;
-            rects.push((i, (ax + c * cw, ay + r * chh, cw, chh)));
+        let mut rects: Vec<(usize, (i32, i32, i32, i32))> = Vec::new();
+        if nh == 1 {
+            let hi = *active.iter().find(|&&i| humans[i]).unwrap();
+            let lw = aw * 2 / 5;
+            rects.push((hi, (ax, ay, lw, ah)));
+            let others: Vec<usize> = active.iter().copied().filter(|&i| i != hi).collect();
+            let cols = 3;
+            let rows = (others.len() as i32 + cols - 1) / cols;
+            let cw = (aw - lw) / cols;
+            let chh = ah / rows.max(1);
+            for (k, &i) in others.iter().enumerate() {
+                let (c, r) = (k as i32 % cols, k as i32 / cols);
+                rects.push((i, (ax + lw + c * cw, ay + r * chh, cw, chh)));
+            }
+        } else {
+            let cols = 3;
+            let (cw, chh) = (aw / cols, ah / 2);
+            let mut order = active.clone();
+            order.sort_by_key(|&i| !humans[i]);
+            for (k, &i) in order.iter().enumerate() {
+                let (c, r) = (k as i32 % cols, k as i32 / cols);
+                rects.push((i, (ax + c * cw, ay + r * chh, cw, chh)));
+            }
+        }
+        for (i, (x, y, w, h)) in rects {
+            let c = style_dims(style(i)).0;
+            let mut bw = (420 / c) * c;
+            while bw > c * 4 && (block_w(style(i), bw) > w - 6 || block_h(bw, any_quad) > h - 4) {
+                bw -= c;
+            }
+            placed.push((i, x + (w - block_w(style(i), bw)) / 2, y + (h - block_h(bw, any_quad)) / 2, bw));
         }
     }
-    for (i, (x, y, w, h)) in rects {
-        let style = m.seats[i].cfg.profile.style();
-        let (cols, rows, side_l, side_r) = match style {
-            Style::Quad => (10, 20, 4.6, 4.6),
-            Style::Chain => (6, 12, 1.2, 3.2),
-            Style::Capsule => (8, 16, 1.0, 3.2),
-            Style::Panel => (6, 12, 1.2, 3.0),
-        };
-        let tot_c = cols as f32 + side_l + side_r;
-        // vertical budget in pixels: nameplate + gap + cabinet rim above, rim + stat line below
-        // (sizes match draw_seat); Quad also keeps two spawn rows above the well
-        let spawn = if style == Style::Quad { 2.0 } else { 0.0 };
-        let fit = |top: i32, bot: i32| ((w as f32 * 0.96 / tot_c).min((h - top - bot) as f32 / (rows as f32 + spawn))).floor().max(4.0) as i32;
-        let (mut top, mut bot) = (50 + 12 + 8, 8 + 10 + 26);
-        let mut cell = fit(top, bot);
-        if cols * cell < 200 {
-            top = 34 + 12 + 8;
-            bot = 8 + 10 + 16;
-            cell = fit(top, bot);
-        }
-        let fw = cols * cell;
-        let fh = rows * cell;
-        let block_w = (tot_c * cell as f32) as i32;
-        let bx = x + (w - block_w) / 2;
-        let fx = bx + (side_l * cell as f32) as i32;
-        let used = top + bot + fh + (spawn * cell as f32) as i32;
-        let fy = y + (h - used) / 2 + top + (spawn * cell as f32) as i32 - if style == Style::Quad { 4 } else { 0 };
-        out[i] = Geom { x, y, w, h, cell, fx, fy, cols, rows };
-        let _ = fw;
+    for (i, bx, by, bw) in placed {
+        let (cols, rows) = style_dims(style(i));
+        let (top, _, plate_h, lift) = vert(bw, any_quad);
+        let (gl, _) = gutters(style(i), bw);
+        out[i] = Geom { x: bx, y: by, w: block_w(style(i), bw), h: block_h(bw, any_quad), cell: bw / cols, fx: bx + gl, fy: by + top, cols, rows, side: side_w(bw), lift, plate_h };
     }
     out
 }
@@ -333,11 +392,46 @@ pub struct Renderer {
     pub scene: Scene,
     pub fx: Fx,
     pub geoms: [Geom; 6],
+    wells: std::collections::HashMap<(i32, i32, i32, u32, u32), Canvas>,
+}
+
+const WELL_PAD: i32 = 26;
+
+/// The glass cabinet around a well: drop shadow, neon edge, deep glass with column lanes,
+/// shading under the top and a glow at the floor, and small ticks at the grid corners.
+/// Painted in real pixels at scale `k`, offset by WELL_PAD.
+#[allow(clippy::too_many_arguments)]
+fn paint_well(k: f32, fw: i32, fh: i32, cell: i32, cols: i32, rows: i32, accent: u32, r: i32) -> Canvas {
+    let p = WELL_PAD;
+    let mut c = Canvas::new(((fw + 2 * p) as f32 * k).round() as i32, ((fh + 2 * p) as f32 * k).round() as i32);
+    c.k = k;
+    c.soft_shadow(p - 6, p - 6, fw + 12, fh + 12, r + 4, 9, 150);
+    c.round_ring(p - 5, p - 5, fw + 10, fh + 10, r + 3, 3, lighten(accent, 90), darken(accent, 30), 255);
+    c.round_ring(p - 2, p - 2, fw + 4, fh + 4, r, 2, 0xFF04_0610, 0xFF04_0610, 255);
+    c.round_grad(p, p, fw, fh, r - 2, 0xFF0E_1430, 0xFF05_0712, 255);
+    for x in (0..cols).step_by(2) {
+        c.rect_a(p + x * cell, p, cell, fh, 0xFFFF_FFFF, 5);
+    }
+    for i in 0..6 {
+        c.rect_a(p, p + i * 3, fw, 3, 0xFF00_0000, (70 - i * 11) as u32);
+    }
+    for i in 0..8 {
+        c.rect_a(p, p + fh - (i + 1) * fh / 40, fw, fh / 40, accent, (22 - i * 2) as u32);
+    }
+    let t = (cell / 9).max(2);
+    for x in 1..cols {
+        for y in 1..rows {
+            let (px, py) = (p + x * cell, p + y * cell);
+            c.rect_a(px - t, py, t * 2 + 1, 1, 0xFF8C_A6FF, 26);
+            c.rect_a(px, py - t, 1, t * 2 + 1, 0xFF8C_A6FF, 26);
+        }
+    }
+    c
 }
 
 impl Renderer {
     pub fn new() -> Self {
-        Renderer { sprites: Sprites::new(), scene: Scene::new(), fx: Fx::new(), geoms: [Geom::default(); 6] }
+        Renderer { sprites: Sprites::new(), scene: Scene::new(), fx: Fx::new(), geoms: [Geom::default(); 6], wells: std::collections::HashMap::new() }
     }
 
     /// Feed this tick's sim events into particles/callouts. Returns nothing; audio is separate.
@@ -421,36 +515,41 @@ impl Renderer {
             Style::Capsule => PINK,
             Style::Panel => YELLOW,
         };
-        if st.theme == ThemeId::Voyage && st.preset != Preset::Potato {
-            // a solid, bevelled cabinet: drop shadow, dark rim, accent edge, inner lip
-            let r = (cell / 3).clamp(6, 14);
-            cv.soft_shadow(g.fx - 8, g.fy - 8, fw + 16, fh + 16, r + 4, 7, 130);
-            // only the visible border of each layer is filled; the well covers the middle
-            cv.round_ring(g.fx - 8, g.fy - 8, fw + 16, fh + 16, r + 4, 3, lighten(accent, 40), darken(accent, 90), 255);
-            cv.round_ring(g.fx - 5, g.fy - 5, fw + 10, fh + 10, r + 1, 2, 0xFF0B_0F22, 0xFF0B_0F22, 255);
-            cv.round_ring(g.fx - 3, g.fy - 3, fw + 6, fh + 6, r, 3, darken(accent, 120), darken(accent, 120), 255);
+        let glassy = st.theme == ThemeId::Voyage && st.preset != Preset::Potato;
+        let danger = board.danger() && seat.alive;
+        let pulse = ((v.t * 6.0).sin() * 0.5 + 0.5) as f32;
+        if glassy {
+            // the cabinet never changes during a match, so it is painted once and reused
+            let r = (cell / 3).clamp(8, 16);
+            let key = (fw, fh, cell, accent, cv.k.to_bits());
+            if self.wells.len() > 24 {
+                self.wells.clear();
+            }
+            let wc = self.wells.entry(key).or_insert_with(|| paint_well(cv.k, fw, fh, cell, g.cols, g.rows, accent, r));
+            cv.blit(wc, g.fx - WELL_PAD, g.fy - WELL_PAD, 255);
+            // the halo stays live: it breathes red when the stack is in danger
+            let edge = if danger { mix(accent, l.warn, (120.0 + 135.0 * pulse) as u32) } else { accent };
+            cv.round_ring(g.fx - 9, g.fy - 9, fw + 18, fh + 18, r + 7, 5, edge, edge, if danger { (40.0 + 50.0 * pulse) as u32 } else { 34 });
+            if danger {
+                cv.round_ring(g.fx - 5, g.fy - 5, fw + 10, fh + 10, r + 3, 3, lighten(edge, 90), darken(edge, 30), (120.0 + 120.0 * pulse) as u32);
+            }
         } else {
-            cv.frame(g.fx - 2, g.fy - 2, fw + 4, fh + 4, 2, if st.theme == ThemeId::Phosphor { l.dim } else { hex(0x555C6E) }, 255);
-        }
-        if st.theme == ThemeId::Voyage && st.preset != Preset::Potato {
-            // deep well with a soft top-to-bottom tone and an accent wash at the floor
-            cv.round_grad(g.fx, g.fy, fw, fh, 4, 0xFF10_1630, 0xFF07_0A18, 255);
-            cv.rect_a(g.fx, g.fy + fh - fh / 5, fw, fh / 5, accent, 10);
-            cv.rect_a(g.fx, g.fy + fh - fh / 10, fw, fh / 10, accent, 10);
-        } else {
+            cv.frame(g.fx - 2, g.fy - 2, fw + 4, fh + 4, 2, if danger { l.warn } else if st.theme == ThemeId::Phosphor { l.dim } else { hex(0x555C6E) }, 255);
             cv.rect_a(g.fx, g.fy, fw, fh, l.well, l.well_alpha);
         }
         if self.fx.flash[i] > 0.05 && st.theme != ThemeId::Tournament && !st.reduce_motion {
             cv.rect_a(g.fx, g.fy, fw, fh, l.warn, (self.fx.flash[i] * 40.0) as u32);
         }
         let _s = crate::prof::scope("S:grid");
-        // grid
-        let grid_a = if style == Style::Chain || style == Style::Capsule { 40 } else { 70 };
-        for x in 1..g.cols {
-            cv.rect_a(g.fx + x * cell, g.fy, 1, fh, l.grid, grid_a);
-        }
-        for y in 1..g.rows {
-            cv.rect_a(g.fx, g.fy + y * cell, fw, 1, l.grid, grid_a);
+        // grid: hairlines on the flat themes (glass wells carry theirs in the cached cabinet)
+        if !glassy {
+            let grid_a = if style == Style::Chain || style == Style::Capsule { 40 } else { 70 };
+            for x in 1..g.cols {
+                cv.rect_a(g.fx + x * cell, g.fy, 1, fh, l.grid, grid_a);
+            }
+            for y in 1..g.rows {
+                cv.rect_a(g.fx, g.fy + y * cell, fw, 1, l.grid, grid_a);
+            }
         }
         // pieces may poke above the well only in Quad (its spawn rows); Chain pairs slide in
         if style == Style::Quad {
@@ -504,21 +603,18 @@ impl Renderer {
             cv.round_rect(mx, g.fy + fh - rows_tray * cell, mw, rows_tray * cell, mw / 2, 0xFFFF_FFFF, pulse as u32);
         }
         let _s = crate::prof::scope("S:plate");
-        // header: a nameplate pill with the name, the style chip, bot info / KOs, target
-        let name = &v.names[i];
+        // header: a nameplate with the portrait, the name, the style chip, bot info / KOs, target
+        let name = crate::ui::nice(&v.names[i]);
         let big = fw >= 200;
         let ns = if big { 2 } else { 1 };
-        let ss = 1;
-        let plate_h = if big { 50 } else { 34 };
-        let lift = if style == Style::Quad { cell * 2 + 4 } else { 12 };
-        let top = g.fy - lift - plate_h;
-        if st.theme == ThemeId::Voyage && st.preset != Preset::Potato {
-            cv.glass(g.fx - 8, top, fw + 16, plate_h, plate_h / 2, crate::ui::GLASS, 175);
-        }
+        let plate_h = g.plate_h;
+        let top = g.fy - g.lift - plate_h;
+        let glassy = st.theme == ThemeId::Voyage && st.preset != Preset::Potato;
+        let (plx, plw) = (g.fx - 8, fw + 16);
+        hud_plate(cv, glassy, plx, top, plw, plate_h, plate_h / 2);
         let name_col = if v.humans[i] { l.accent } else { 0xFFFF_FFFF };
-        let ny = top + if big { 5 } else { 3 };
         // the character: a portrait that pops out of the plate and reacts to the board
-        let mut name_x = g.fx + 6;
+        let mut name_x = plx + plate_h / 2 - 4;
         if st.characters {
             let member = &crate::cast::CAST[v.chars[i].min(crate::cast::CAST.len() - 1)];
             let expr = if m.outcome != Outcome::Running && m.is_winner(i) {
@@ -533,49 +629,71 @@ impl Renderer {
                 "smile"
             };
             let ps = if big { 76 } else { 50 };
-            let px = g.fx - 4;
+            let px = plx + 2;
             let py = top + plate_h - ps;
             cv.circle((px + ps / 2) as f32, (py + ps / 2 + 2) as f32, ps as f32 * 0.47, member.color, 255);
             cv.set_clip(px, py - ps, ps, ps * 2 - 2);
             crate::assets::draw_portrait(cv, member.id, expr, px - ps / 10, py - ps / 8, ps + ps / 5, 255, false);
             cv.reset_clip();
-            name_x = px + ps + 4;
+            name_x = px + ps + 6;
         }
-        cv.text_weight(name_x, ny, &crate::ui::nice(name), ns, name_col, 255, Weight::Bold);
-        // style chip
+        let right = plx + plw - if big { 14 } else { 10 };
+        let ny = top + if big { 5 } else { 4 };
+        // style chip: always on a big plate, on a small one only when the whole name still fits
         let sname = crate::ui::title_case(style.name());
-        let sw = Canvas::text_wb(&sname, ss, Weight::Bold) + 14;
-        let sh = Canvas::px(ss) as i32 + 4;
-        let sx = g.fx + fw + 2 - sw;
-        let sy = ny + 2;
-        cv.round_rect(sx, sy, sw, sh, sh / 2, accent, 230);
-        cv.text_weight(sx + 7, sy + 1, &sname, ss, 0xFF0A_0E1E, 255, Weight::Bold);
+        let sw = Canvas::text_wb(&sname, 1, Weight::Bold) + 14;
+        let sh = Canvas::px(1) as i32 + 4;
+        let chip = big || Canvas::text_wb(&name, ns, Weight::Bold) + sw + 8 <= right - name_x;
+        let name_room = right - name_x - if chip { sw + 8 } else { 0 };
+        cv.text_weight(name_x, ny, &fit_text(&name, ns, Weight::Bold, name_room), ns, name_col, 255, Weight::Bold);
+        if chip {
+            let (sx, sy) = (right - sw, ny + if big { 3 } else { -1 });
+            cv.round_rect(sx, sy, sw, sh, sh / 2, accent, 235);
+            cv.text_weight(sx + 7, sy + 1, &sname, 1, 0xFF0A_0E1E, 255, Weight::Bold);
+        }
+        // second line: bot info and KO stars on the left, the current target on the right
         let line2 = ny + Canvas::px(ns) as i32 + if big { 1 } else { 0 };
+        let mut room = right - name_x;
+        if m.active_count() > 2 && seat.alive && seat.target != 0xFF {
+            let t = format!("\u{2192} {}", crate::ui::nice(&v.names[seat.target as usize]));
+            if Canvas::text_w(&t, 1) <= room {
+                cv.text_right(right, line2, &t, 1, l.dim);
+                room -= Canvas::text_w(&t, 1) + 8;
+            }
+        }
+        let stars: String = std::iter::repeat('\u{2605}').take(seat.kos.min(8) as usize).collect();
         let mut info = String::new();
         if seat.cfg.kind == SeatKind::Bot {
-            info = format!("{}   Lv {}", crate::ui::title_case(seat.cfg.personality.name()), seat.cfg.strength);
+            info = if big { format!("{}   Lv {}", crate::ui::title_case(seat.cfg.personality.name()), seat.cfg.strength) } else { format!("Lv {}", seat.cfg.strength) };
         }
-        if seat.kos > 0 {
-            let stars: String = std::iter::repeat('\u{2605}').take(seat.kos.min(8) as usize).collect();
-            info = if info.is_empty() { stars } else { format!("{}  {}", info, stars) };
-        }
-        if !info.is_empty() && big {
-            cv.text_s(name_x, line2, &info, 1, l.dim);
-        }
-        if m.active_count() > 2 && seat.alive && seat.target != 0xFF {
-            let t = format!("\u{2192} {}", v.names[seat.target as usize]);
-            let ty = if big { line2 } else { sy + sh + 1 };
-            cv.text_right(g.fx + fw, ty, &t, 1, l.dim);
+        for cand in [if info.is_empty() { stars.clone() } else if stars.is_empty() { info.clone() } else { format!("{}  {}", info, stars) }, stars.clone(), info.clone()] {
+            if !cand.is_empty() && Canvas::text_w(&cand, 1) <= room {
+                cv.text_s(name_x, line2, &cand, 1, l.dim);
+                break;
+            }
         }
         let _s = crate::prof::scope("S:footer");
-        // footer stats
-        let fy = g.fy + fh + 10;
-        let stat = crate::ui::nice(&stat_line(m, i));
-        let fs = if fw >= 200 { 2 } else { 1 };
-        cv.text_weight(g.fx + 1, fy + 1, &stat, fs, 0xFF00_0000, 140, Weight::Bold);
-        cv.text_weight(g.fx, fy, &stat, fs, l.text, 255, Weight::Bold);
+        // footer: the seat's numbers on a pill under the cabinet
+        let vs = if big { 2 } else { 1 };
+        let mut pairs = stat_pairs(m, i);
+        let need = |p: &[(&str, String)]| p.iter().map(|(a, b)| Canvas::text_w(a, 1) + 6 + Canvas::text_wb(b, vs, Weight::Bold)).sum::<i32>() + 14 * (p.len() as i32 - 1);
+        while pairs.len() > 1 && need(&pairs) > plw - 16 {
+            pairs.pop();
+        }
+        let pill_h = if big { 30 } else { 20 };
+        let py = g.fy + fh + 16;
+        hud_plate(cv, glassy, plx, py, plw, pill_h, pill_h / 2);
+        let colw = (plw - 16) / pairs.len().max(1) as i32;
+        for (k, (lab, val)) in pairs.iter().enumerate() {
+            let (lw, vw) = (Canvas::text_w(lab, 1), Canvas::text_wb(val, vs, Weight::Bold));
+            let x0 = plx + 8 + k as i32 * colw + (colw - lw - 6 - vw) / 2;
+            let vy = py + (pill_h - Canvas::px(vs) as i32) / 2 - 1;
+            let ly = vy + ((Canvas::px(vs) - Canvas::px(1)) * 0.74) as i32;
+            cv.text_a(x0, ly, lab, 1, l.dim, 255);
+            cv.text_weight(x0 + lw + 6, vy, val, vs, l.text, 255, Weight::Bold);
+        }
         if v.settings.input_display && v.humans[i] {
-            draw_inputs(cv, g.fx, fy + 12 * ts, v.inputs[i], ts, &l);
+            draw_inputs(cv, g.fx, py + pill_h + 6, v.inputs[i], ts, &l);
         }
         // dead / winner overlays
         if !seat.alive {
@@ -606,7 +724,20 @@ impl Renderer {
                 cv.blit(spr, px, py, 255);
                 if clearing {
                     let k = (q.timer as f32 / 18.0).clamp(0.0, 1.0);
-                    cv.rect_a(px, py, cell, cell, 0xFFFF_FFFF, (k * 230.0) as u32);
+                    cv.round_rect(px + 1, py + 1, cell - 2, cell - 2, cell / 5, 0xFFFF_FFFF, (k * 200.0) as u32);
+                }
+            }
+        }
+        // cleared rows: a beam of light that sweeps out from the middle and fades
+        if !q.clear_rows.is_empty() && !flat {
+            let k = (q.timer as f32 / 18.0).clamp(0.0, 1.0);
+            let fw = g.cols * cell;
+            let span = (fw as f32 * (1.15 - k * 0.6)) as i32;
+            for &y in q.clear_rows.iter() {
+                let py = g.fy + (y - qd::VIS0) * cell;
+                let cx = g.fx + fw / 2;
+                for (grow, a) in [(cell / 2, 40u32), (cell / 4, 80), (2, 200)] {
+                    cv.round_rect(cx - span / 2, py + cell / 2 - grow - 1, span, grow * 2 + 2, grow + 1, 0xFFFF_FFFF, (a as f32 * k) as u32);
                 }
             }
         }
@@ -628,29 +759,42 @@ impl Renderer {
                 cv.blit(spr, g.fx + (p.x + dx) * cell, g.fy + (p.y + dy - qd::VIS0) * cell, 255);
             }
         }
-        // hold and next
+        // hold and next, each in its own framed box beside the cabinet
         cv.reset_clip();
-        let small = (cell * 3 / 5).max(4);
         let l = look(st.theme);
-        let ts = if cell >= 20 { 2 } else { 1 };
-        hud_label(cv, g.fx - (cell as f32 * 4.3) as i32, g.fy, "Hold", ts, l.dim);
+        let glassy = st.theme == ThemeId::Voyage && st.preset != Preset::Potato;
+        let (sw, top) = (g.side, g.fy - 8);
+        let s1 = ((sw - 12) / 4).max(3);
+        let s2 = (s1 * 4 / 5).max(3);
+        let head = side_head(sw, "HOLD");
+        let hx = g.fx - 26 - sw;
+        side_box(cv, glassy, hx, top, sw, head + s1 * 3 + 4, "HOLD", &l);
         if let Some(h) = q.hold {
             let c = if q.hold_used { GRAY } else { theme_tint(st.theme, qd_color(h + 1)) };
-            self.mini_piece(cv, h, g.fx - (cell as f32 * 4.3) as i32, g.fy + 12 * ts, small, c, pat, flat);
+            self.mini_piece(cv, h, hx, top + head, sw, s1 * 3, s1, c, pat, flat);
         }
-        let nx = g.fx + g.cols * cell + (cell / 2);
-        hud_label(cv, nx, g.fy, "Next", ts, l.dim);
-        for (k, &t) in q.queue.iter().take(q.cfg.preview).enumerate() {
-            let c = theme_tint(st.theme, qd_color(t + 1));
-            self.mini_piece(cv, t, nx, g.fy + 12 * ts + k as i32 * small * 3, small, c, pat, flat);
+        let nx = g.fx + g.cols * cell + 18;
+        let n = q.cfg.preview.min(q.queue.len()) as i32;
+        if n > 0 {
+            side_box(cv, glassy, nx, top, sw, head + s1 * 3 + (n - 1) * s2 * 3 + 4, "NEXT", &l);
+            for (k, &t) in q.queue.iter().take(n as usize).enumerate() {
+                let c = theme_tint(st.theme, qd_color(t + 1));
+                let (s, y) = if k == 0 { (s1, top + head) } else { (s2, top + head + s1 * 3 + (k as i32 - 1) * s2 * 3) };
+                self.mini_piece(cv, t, nx, y, sw, s * 3, s, c, pat, flat);
+            }
         }
     }
 
+    /// A piece centred in the slot (x, y, w, h), drawn with cells of size `s`.
     #[allow(clippy::too_many_arguments)]
-    fn mini_piece(&mut self, cv: &mut Canvas, t: u8, x: i32, y: i32, s: i32, c: u32, pat: bool, flat: bool) {
-        for &(dx, dy) in qd::SHAPES[t as usize][0].iter() {
+    fn mini_piece(&mut self, cv: &mut Canvas, t: u8, x: i32, y: i32, w: i32, h: i32, s: i32, c: u32, pat: bool, flat: bool) {
+        let shape = &qd::SHAPES[t as usize][0];
+        let (x0, x1) = (shape.iter().map(|p| p.0).min().unwrap(), shape.iter().map(|p| p.0).max().unwrap() + 1);
+        let (y0, y1) = (shape.iter().map(|p| p.1).min().unwrap(), shape.iter().map(|p| p.1).max().unwrap() + 1);
+        let (ox, oy) = (x + (w - (x1 - x0) * s) / 2, y + (h - (y1 - y0) * s) / 2);
+        for &(dx, dy) in shape.iter() {
             let spr = self.sprites.get(SpriteKey { kind: CellKind::Gem, color: c, size: s, face: false, pattern: pat && s >= 12, flat, frame: 0 });
-            cv.blit(spr, x + dx * s, y + dy * s, 255);
+            cv.blit(spr, ox + (dx - x0) * s, oy + (dy - y0) * s, 255);
         }
     }
 
@@ -680,17 +824,15 @@ impl Renderer {
                     let col = theme_tint(st.theme, chain_color(v));
                     let px = (g.fx + x * cell) as f32;
                     let py = (g.fy + (y - ch::VIS0) * cell) as f32;
-                    let ink = darken(col, 150);
-                    let neck = cf * 0.56;
+                    let neck = cf * 0.5;
                     if x + 1 < ch::W && c.grid[i + 1] == v && !(popping && c.pop_cells.contains(&(i as i32 + 1))) {
                         let (nx, ny, nw, nh) = (px + cf * 0.5, py + (cf - neck) / 2.0, cf, neck);
-                        cv.round_rect(nx as i32 - 1, ny as i32 - 1, nw as i32 + 2, nh as i32 + 2, (nh / 2.0) as i32, ink, 255);
-                        cv.round_grad(nx as i32, ny as i32, nw as i32, nh as i32, (nh / 2.0) as i32, lighten(col, 70), darken(col, 25), 255);
+                        cv.round_grad(nx as i32, ny as i32, nw as i32, nh as i32, (nh / 2.0) as i32, lighten(col, 40), darken(col, 60), 255);
+                        cv.round_rect(nx as i32 + nw as i32 / 4, ny as i32 + (nh / 5.0) as i32, nw as i32 / 2, (nh / 5.0).max(1.0) as i32, 2, 0xFFFF_FFFF, 70);
                     }
                     if y + 1 < ch::H && c.grid[i + ch::W as usize] == v && !(popping && c.pop_cells.contains(&(i as i32 + ch::W))) {
                         let (nx, ny, nw, nh) = (px + (cf - neck) / 2.0, py + cf * 0.5, neck, cf);
-                        cv.round_rect(nx as i32 - 1, ny as i32 - 1, nw as i32 + 2, nh as i32 + 2, (nw / 2.0) as i32, ink, 255);
-                        cv.round_grad(nx as i32, ny as i32, nw as i32, nh as i32, (nw / 2.0) as i32, col, darken(col, 30), 255);
+                        cv.round_grad(nx as i32, ny as i32, nw as i32, nh as i32, (nw / 2.0) as i32, col, darken(col, 40), 255);
                     }
                 }
             }
@@ -753,20 +895,27 @@ impl Renderer {
             );
         }
         cv.reset_clip();
-        let ts = (cell / 14).clamp(1, 2);
-        let nx = g.fx + g.cols * cell + cell / 2;
-        hud_label(cv, nx, g.fy, "Next", ts, l.dim);
-        for (k, (a, b)) in c.next_pairs().iter().enumerate() {
-            let s = if k == 0 { cell } else { cell * 3 / 4 };
-            let y0 = g.fy + 12 * ts + k as i32 * (cell * 5 / 2);
+        let glassy = st.theme == ThemeId::Voyage && st.preset != Preset::Potato;
+        let (sw, top) = (g.side, g.fy - 8);
+        let nx = g.fx + g.cols * cell + 18;
+        let s1 = cell.min(sw - 14).max(4);
+        let s2 = (s1 * 3 / 4).max(4);
+        let head = side_head(sw, "NEXT");
+        let pairs = c.next_pairs();
+        let gap = (s1 / 4).max(3);
+        let bh = head + s1 * 2 + (pairs.len() as i32 - 1).max(0) * (s2 * 2 + gap) + 6;
+        side_box(cv, glassy, nx, top, sw, bh, "NEXT", &l);
+        for (k, (a, b)) in pairs.iter().enumerate() {
+            let s = if k == 0 { s1 } else { s2 };
+            let y0 = top + head + if k == 0 { 0 } else { s1 * 2 + gap + (k as i32 - 1) * (s2 * 2 + gap) };
             for (j, col) in [b, a].iter().enumerate() {
                 let colr = theme_tint(st.theme, chain_color(**col));
                 let spr = self.sprites.get(SpriteKey { kind: CellKind::Blob, color: colr, size: s, face: faces && s >= 16, pattern: st.colorblind, flat, frame: 0 });
-                cv.blit(spr, nx, y0 + j as i32 * s, 255);
+                cv.blit(spr, nx + (sw - s) / 2, y0 + j as i32 * s, 255);
             }
         }
         if c.all_clear_bonus {
-            cv.text_s(nx, g.fy + cell * 6, "All clear +30", ts, l.good);
+            side_value(cv, glassy, nx, top + bh + 8, sw, "BONUS", "+30", None, l.good, &l);
         }
     }
 
@@ -817,23 +966,25 @@ impl Renderer {
         }
         cv.reset_clip();
         let l = look(st.theme);
-        let ts = (cell / 14).clamp(1, 2);
-        let nx = g.fx + g.cols * cell + cell / 2;
-        hud_label(cv, nx, g.fy, "Next", ts, l.dim);
+        let glassy = st.theme == ThemeId::Voyage && st.preset != Preset::Potato;
+        let (sw, top) = (g.side, g.fy - 8);
+        let nx = g.fx + g.cols * cell + 18;
+        let s = cell.min((sw - 12) / 2).max(4);
+        let head = side_head(sw, "NEXT");
+        let bh = head + s + 8;
+        side_box(cv, glassy, nx, top, sw, bh, "NEXT", &l);
         if let Some((a, b)) = c.preview() {
             for (j, (col, kind)) in [(a, CellKind::HalfL), (b, CellKind::HalfR)].iter().enumerate() {
                 let colr = theme_tint(st.theme, capsule_color(*col));
-                let spr = self.sprites.get(SpriteKey { kind: *kind, color: colr, size: cell, face: faces, pattern: st.colorblind, flat, frame: 0 });
-                cv.blit(spr, nx + j as i32 * cell, g.fy + 12 * ts, 255);
+                let spr = self.sprites.get(SpriteKey { kind: *kind, color: colr, size: s, face: faces, pattern: st.colorblind, flat, frame: 0 });
+                cv.blit(spr, nx + sw / 2 - s + j as i32 * s, top + head + 1, 255);
             }
         }
-        // virus counter as a big number
-        hud_label(cv, nx, g.fy + cell * 3, "Virus", ts, l.dim);
-        cv.text_s(nx, g.fy + cell * 3 + 10 * ts, &format!("{}", c.viruses), ts + 1, l.accent);
-        cv.text_s(nx, g.fy + cell * 5 + 10 * ts, &format!("Lv {}", c.level), ts, l.dim);
-        cv.text_s(nx, g.fy + cell * 6 + 10 * ts, &crate::ui::title_case(cap::SPEED_NAMES[c.speed as usize]), ts, l.dim);
+        let mut y = top + bh + 8;
+        y = side_value(cv, glassy, nx, y, sw, "VIRUS", &format!("{}", c.viruses), None, l.accent, &l);
+        y = side_value(cv, glassy, nx, y, sw, "LEVEL", &format!("{}", c.level), Some(&crate::ui::title_case(cap::SPEED_NAMES[c.speed as usize])), l.text, &l);
         if c.nes_seeds {
-            cv.text_s(nx, g.fy + cell * 7 + 10 * ts, &format!("{:04X}", c.nes_seed), ts, l.dim);
+            side_value(cv, glassy, nx, y, sw, "SEED", &format!("{:04X}", c.nes_seed), None, l.dim, &l);
         }
     }
 
@@ -851,9 +1002,13 @@ impl Renderer {
             let w = b.w * cell;
             let hgt = b.h * cell;
             let _ = flash_on;
-            cv.round_rect(x0 + 1, y0 + 1, w - 2, hgt - 2, cell / 4, 0xFF2A_2E40, 255);
-            cv.round_grad(x0 + 3, y0 + 3, w - 6, hgt - 6, cell / 5, hex(0xA9AFC6), hex(0x646A84), 255);
-            cv.round_rect(x0 + cell / 5, y0 + 4, w - 2 * (cell / 5), (cell / 7).max(2), cell / 14 + 1, 0xFFFF_FFFF, 70);
+            // a slab of frosted stone: dark rim, bevelled edge, a cool face and a gloss streak
+            let rr = (cell / 4).max(3);
+            cv.round_rect(x0 + 1, y0 + 1, w - 2, hgt - 2, rr, 0xFF23_2638, 255);
+            cv.round_grad(x0 + 2, y0 + 2, w - 4, hgt - 4, rr - 1, hex(0xC9CEE0), hex(0x5A6078), 255);
+            let bev = (cell / 9).max(2);
+            cv.round_grad(x0 + 2 + bev, y0 + 2 + bev, w - 4 - 2 * bev, hgt - 4 - 2 * bev, (rr - bev).max(2), hex(0xA4AAC2), hex(0x787E98), 255);
+            cv.round_rect(x0 + cell / 4, y0 + 2 + bev + 2, w - cell / 2, (cell / 8).max(2), cell / 16 + 1, 0xFFFF_FFFF, 90);
             if b.crack > 0 {
                 let pulse = (t * 14.0).sin() * 0.5 + 0.5;
                 cv.round_rect(x0 + 3, y0 + 3, w - 6, hgt - 6, cell / 5, 0xFFFF_FFFF, (60.0 + 140.0 * pulse) as u32);
@@ -926,21 +1081,25 @@ impl Renderer {
             }
         }
         cv.round_rect(cx + cell - 1, cy + cell / 4, 2, cell / 2, 1, 0xFFFF_FFFF, 90);
-        let ts = (cell / 14).clamp(1, 2);
-        let nx = g.fx + g.cols * cell + cell / 2;
-        if p.stop > 0 {
-            hud_label(cv, nx, g.fy, "Stop", ts, l.good);
-            let h = (p.stop.min(240) as i32 * g.rows * cell / 2) / 240;
-            cv.rect(nx, g.fy + 12 * ts, (cell / 3).max(3), h, l.good);
-        }
+        let glassy = st.theme == ThemeId::Voyage && st.preset != Preset::Potato;
+        let (sw, top) = (g.side, g.fy - 8);
+        let nx = g.fx + g.cols * cell + 18;
+        let mut y = top;
         if p.puzzle {
-            hud_label(cv, nx, g.fy + cell * 5, "Moves", ts, l.dim);
-            cv.text_s(nx, g.fy + cell * 5 + 10 * ts, &format!("{}", p.moves_left.max(0)), ts + 1, l.accent);
+            y = side_value(cv, glassy, nx, y, sw, "MOVES", &format!("{}", p.moves_left.max(0)), None, l.accent, &l);
         } else {
-            cv.text_s(nx, g.fy + cell * 8, &format!("Lv {}", p.level), ts, l.dim);
+            y = side_value(cv, glassy, nx, y, sw, "LEVEL", &format!("{}", p.level), None, l.text, &l);
         }
         if p.chain > 1 {
-            cv.text_s(nx, g.fy + cell * 6, &format!("x{}", p.chain), ts + 1, l.accent);
+            y = side_value(cv, glassy, nx, y, sw, "CHAIN", &format!("x{}", p.chain), None, l.accent, &l);
+        }
+        if p.stop > 0 {
+            // the stack is held: a bar that drains as the stop time runs out
+            let head = side_head(sw, "STOP");
+            side_box(cv, glassy, nx, y, sw, head + 16, "STOP", &l);
+            let bw = sw - 16;
+            cv.round_rect(nx + 8, y + head + 2, bw, 6, 3, 0xFF05_0814, 220);
+            cv.round_rect(nx + 8, y + head + 2, (p.stop.min(240) as i32 * bw / 240).max(6), 6, 3, l.good, 255);
         }
     }
 }
@@ -976,20 +1135,79 @@ pub fn fmt_time(ticks: u32) -> String {
     format!("{}:{:02}.{:02}", cs / 6000, (cs / 100) % 60, cs % 100)
 }
 
-fn stat_line(m: &Match, i: usize) -> String {
+fn stat_pairs(m: &Match, i: usize) -> Vec<(&'static str, String)> {
     let s = &m.seats[i];
     match s.board.as_ref().unwrap() {
         Board::Quad(q) => {
             if m.header.mode.is_solo() {
-                format!("Lines {}   Lv {}   {}", q.lines, q.level, fmt_time(m.tick))
+                vec![("Lines", q.lines.to_string()), ("Level", q.level.to_string())]
             } else {
-                format!("Lines {}   Sent {}", q.lines, s.stats.sent)
+                vec![("Lines", q.lines.to_string()), ("Sent", s.stats.sent.to_string())]
             }
         }
-        Board::Chain(c) => format!("Score {}   Target {}", c.score, c.target),
-        Board::Capsule(c) => format!("Score {}", c.score),
-        Board::Panel(p) => format!("Score {}   Best x{}", p.score, p.max_chain),
+        Board::Chain(c) => vec![("Score", c.score.to_string()), ("Target", c.target.to_string())],
+        Board::Capsule(c) => vec![("Score", c.score.to_string())],
+        Board::Panel(p) => vec![("Score", p.score.to_string()), ("Best", format!("x{}", p.max_chain))],
     }
+}
+
+/// The backing of every HUD element: glass on Voyage, a plain dark card on the flat themes.
+fn hud_plate(cv: &mut Canvas, glassy: bool, x: i32, y: i32, w: i32, h: i32, r: i32) {
+    if glassy {
+        cv.glass(x, y, w, h, r, crate::ui::GLASS, 190);
+    } else {
+        cv.round_rect(x, y, w, h, r.min(6), 0xFF0A_0E1E, 220);
+    }
+}
+
+/// Height of a side box's caption strip (narrow columns drop the caption).
+fn side_head(w: i32, label: &str) -> i32 {
+    if Canvas::text_wb(label, 1, Weight::Bold) <= w - 4 { 23 } else { 6 }
+}
+
+/// A framed box in the side column with a small caption on top.
+#[allow(clippy::too_many_arguments)]
+fn side_box(cv: &mut Canvas, glassy: bool, x: i32, y: i32, w: i32, h: i32, label: &str, l: &Look) {
+    hud_plate(cv, glassy, x, y, w, h, (w / 6).clamp(5, 14));
+    let lw = Canvas::text_wb(label, 1, Weight::Bold);
+    if lw <= w - 4 {
+        cv.text_weight(x + (w - lw) / 2, y + 6, label, 1, l.dim, 255, Weight::Bold);
+    }
+}
+
+/// A captioned number in the side column (virus count, level, chain...). Returns the next y.
+#[allow(clippy::too_many_arguments)]
+fn side_value(cv: &mut Canvas, glassy: bool, x: i32, y: i32, w: i32, label: &str, value: &str, sub: Option<&str>, col: u32, l: &Look) -> i32 {
+    let head = side_head(w, label);
+    let mut vs = if w >= 70 { 3 } else if w >= 44 { 2 } else { 1 };
+    while vs > 1 && Canvas::text_wb(value, vs, Weight::Bold) > w - 8 {
+        vs -= 1;
+    }
+    let vh = (Canvas::px(vs) * 0.92) as i32;
+    let sub = sub.filter(|s| Canvas::text_w(s, 1) <= w - 6);
+    let h = head + vh + if sub.is_some() { 15 } else { 0 } + 6;
+    side_box(cv, glassy, x, y, w, h, label, l);
+    let vw = Canvas::text_wb(value, vs, Weight::Bold);
+    cv.text_weight(x + (w - vw) / 2, y + head - 2, value, vs, col, 255, Weight::Bold);
+    if let Some(s) = sub {
+        cv.text_a(x + (w - Canvas::text_w(s, 1)) / 2, y + head + vh - 1, s, 1, l.dim, 255);
+    }
+    y + h + 8
+}
+
+/// Shorten text with an ellipsis until it fits `maxw`.
+fn fit_text(s: &str, scale: i32, w: Weight, maxw: i32) -> String {
+    if Canvas::text_wb(s, scale, w) <= maxw {
+        return s.to_string();
+    }
+    let mut cs: Vec<char> = s.chars().collect();
+    while cs.pop().is_some() {
+        let t = format!("{}..", cs.iter().collect::<String>().trim_end());
+        if Canvas::text_wb(&t, scale, w) <= maxw {
+            return t;
+        }
+    }
+    String::new()
 }
 
 fn draw_inputs(cv: &mut Canvas, x: i32, y: i32, bits: u16, ts: i32, l: &Look) {
@@ -1001,10 +1219,4 @@ fn draw_inputs(cv: &mut Canvas, x: i32, y: i32, bits: u16, ts: i32, l: &Look) {
         cv.text_a(cx, y, s, ts.max(1), if on { l.accent } else { l.dim }, if on { 255 } else { 90 });
         cx += Canvas::text_w(s, ts.max(1)) + 4 * ts;
     }
-}
-
-/// Side-of-board label (Next, Hold, Virus...): bold with a soft shadow so it reads on any backdrop.
-fn hud_label(cv: &mut Canvas, x: i32, y: i32, s: &str, ts: i32, c: u32) {
-    cv.text_weight(x + 1, y + 1, s, ts, 0xFF00_0000, 150, Weight::Bold);
-    cv.text_weight(x, y, s, ts, c, 255, Weight::Bold);
 }

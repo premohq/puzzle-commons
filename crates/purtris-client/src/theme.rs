@@ -319,7 +319,8 @@ fn color_name(c: u32) -> Option<&'static str> {
     })
 }
 
-/// Blender-rendered toon sprite for this key, with faces and patterns layered on top.
+/// The painted piece sprite for this key (tools/sprites/pieces.py), with faces and patterns
+/// layered on top.
 fn art_sprite(k: SpriteKey) -> Option<Canvas> {
     let c = color_name(k.color)?;
     let name = match k.kind {
@@ -345,7 +346,7 @@ fn art_sprite(k: SpriteKey) -> Option<Canvas> {
     match k.kind {
         CellKind::Gem | CellKind::GemFace => {
             if pat != Pattern::None {
-                draw_pattern(&mut cv, pat, sf * 0.5, sf * 0.52, sf * 0.15, lighten(k.color, 200), 200);
+                draw_pattern(&mut cv, pat, sf * 0.5, sf * 0.54, sf * 0.13, lighten(k.color, 200), 130);
             }
             if k.kind == CellKind::GemFace && k.face && s >= 14 {
                 eyes(&mut cv, sf * 0.5, sf * 0.42, sf, false, false);
@@ -455,8 +456,9 @@ fn paint(k: SpriteKey) -> Canvas {
             }
         }
         CellKind::Ghost => {
-            cv.round_rect(pad, pad, s - 2 * pad, s - 2 * pad, s / 5, c, 60);
-            cv.frame(pad, pad, s - 2 * pad, s - 2 * pad, (s / 16).max(1), c, 150);
+            let th = (s / 14).max(1);
+            cv.round_rect(pad, pad, s - 2 * pad, s - 2 * pad, s / 5, c, 38);
+            cv.round_ring(pad, pad, s - 2 * pad, s - 2 * pad, s / 5, th, lighten(c, 60), c, 190);
         }
         CellKind::Blob | CellKind::Nuisance => {
             let r = sf * 0.46;

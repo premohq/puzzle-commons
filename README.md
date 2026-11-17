@@ -159,6 +159,9 @@ copied anywhere.
 Then run the scripts in `tools/blender/` (`overworld.py`, `export_cast.py`, `font_atlas.py`, `icons.py`,
 `logo.py`) with `blender -b --factory-startup --python <script> -- <args>`.
 
+The piece art (Quad blocks, Chain blobs, capsules and germs, Panel tiles) is painted by
+`python3 tools/sprites/pieces.py` (numpy and Pillow, no Blender) into `assets/sprites/`.
+
 The cast: put the VRoid CC0 sample avatars (sources in `third_party/vroid_cc0/LICENSE.txt`) as `.vrm` files in
 `third_party/vroid_cc0/vrm/`, then `blender -b --factory-startup --python tools/blender/cast3d.py -- <repo> cast`
 renders every character in eight expressions (full body and portrait) into `assets/cast/`.
