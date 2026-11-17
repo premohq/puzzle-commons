@@ -23,6 +23,8 @@ const BAR: i32 = 38;
 const BOX_X: i32 = 168;
 const BOX_Y: i32 = 516;
 const BOX_W: i32 = 944;
+/// Width the dialogue wraps to (story::check holds every line to three rows of it).
+pub const TEXT_W: i32 = BOX_W - 92;
 const BOX_H: i32 = 146;
 const TEXT_SCALE: i32 = 3;
 const LINE_H: i32 = 40;
@@ -87,11 +89,15 @@ impl SceneView {
 
 // ------------------------------------------------------------------ the scene's look
 
-/// A speaker's name, color and title. Ids outside the cast are bodiless voices (a talking box,
-/// an intercom): a plain gray plate with their id as the name, and nobody on stage.
+/// A speaker's name, color and title. Voices (the box, Sena) and ids outside the cast have no
+/// body: a plate in their color, and nobody on stage.
 fn speaker(who: &str) -> (String, u32, &'static str) {
+    if let Some((name, color)) = cast::voice(who) {
+        return (name.to_string(), color, "");
+    }
     match cast::CAST.iter().find(|m| m.id == who) {
-        Some(m) => (m.name.to_string(), m.color, m.title),
+        // the courier goes by the name the player gave them
+        Some(m) => (cast::name_of(who), m.color, m.title),
         None => {
             let mut c = who.chars();
             let name = c.next().map(|f| f.to_uppercase().collect::<String>() + c.as_str()).unwrap_or_default();
@@ -307,12 +313,10 @@ fn hint(cv: &mut Canvas, x: i32, y: i32, key: &str, action: &str, on: bool, acce
 
 impl App {
     /// Play scene `id` (once), then go to `then`.
-    pub(crate) fn play_scene(&mut self, id: &'static str, then: Screen) -> Screen {
-        if cast::scene(id).is_none() {
-            return then;
-        }
-        self.mark_scene(id);
-        Screen::Scene(Box::new(SceneView::new(id, then)))
+    pub(crate) fn play_scene(&mut self, id: &str, then: Screen) -> Screen {
+        let Some(sc) = cast::scene(id) else { return then };
+        self.mark_scene(sc.id);
+        Screen::Scene(Box::new(SceneView::new(sc.id, then)))
     }
 
     pub(crate) fn scene_screen(&mut self, nav: &Nav, mut v: Box<SceneView>) -> Screen {
@@ -337,9 +341,11 @@ impl App {
         let log_key = self.input.key_pressed(Key::L) || pads_hit(pad::Y);
         let auto_key = self.input.key_pressed(Key::F) || pads_hit(pad::X);
         let hide_key = self.input.key_pressed(Key::H) || pads_hit(pad::LB);
-        let full = cur.text.chars().count();
+        // the courier's chosen name and pronouns
+        let said = cast::say(cur.text);
+        let full = said.chars().count();
         // the typewriter: characters whose time has come
-        let chars: Vec<char> = cur.text.chars().collect();
+        let chars: Vec<char> = said.chars().collect();
         let reveal_t = (v.lt - 0.12).max(0.0);
         let mut shown = 0usize;
         let mut acc = 0.0;
@@ -450,7 +456,7 @@ impl App {
         for (si, side) in sides.iter_mut().enumerate() {
             let mut recent: Vec<&'static str> = Vec::new();
             for l in said.iter().rev() {
-                if on_right(l.who) == (si == 1) && !recent.contains(&l.who) && crate::assets::has_art(l.who) {
+                if on_right(l.who) == (si == 1) && !recent.contains(&l.who) && cast::voice(l.who).is_none() && crate::assets::has_art(l.who) {
                     recent.push(l.who);
                 }
             }
@@ -700,7 +706,10 @@ impl App {
             self.cv.text_weight(tx, ny + 13, title, 1, crate::gfx::lighten(col, 60), ta, Weight::Bold);
         }
         // the words, laid out in full first so nothing jumps between lines while it types
-        let lines = crate::gfx::wrap(cur.text, bw - 92, TEXT_SCALE);
+        let said = cast::say(cur.text);
+        let lines = crate::gfx::wrap(&said, TEXT_W, TEXT_SCALE);
+        // voices without a body (the box, Sena) speak in warm ink
+        let ink = if cast::voice(cur.who).is_some() { 0xFFFF_E7B8 } else { 0xFFF4_F6FF };
         let ty = by + 34;
         let mut idx = 0usize;
         for (k, ln) in lines.iter().enumerate().take(3) {
@@ -708,15 +717,15 @@ impl App {
             let y = ty + k as i32 * LINE_H;
             let x = bx + 46;
             if shown >= idx + len {
-                self.cv.text_weight(x, y, ln, TEXT_SCALE, 0xFFF4_F6FF, a, Weight::Regular);
+                self.cv.text_weight(x, y, ln, TEXT_SCALE, ink, a, Weight::Regular);
             } else if shown > idx || (shown == idx && frac > 0.0) {
                 let part: String = ln.chars().take(shown - idx).collect();
-                self.cv.text_weight(x, y, &part, TEXT_SCALE, 0xFFF4_F6FF, a, Weight::Regular);
+                self.cv.text_weight(x, y, &part, TEXT_SCALE, ink, a, Weight::Regular);
                 // the next letter fades in
                 if let Some(c) = ln.chars().nth(shown - idx) {
                     let px = x + Canvas::text_wb(&part, TEXT_SCALE, Weight::Regular);
                     let mut s = [0u8; 4];
-                    self.cv.text_weight(px, y, c.encode_utf8(&mut s), TEXT_SCALE, 0xFFF4_F6FF, (a as f32 * frac) as u32, Weight::Regular);
+                    self.cv.text_weight(px, y, c.encode_utf8(&mut s), TEXT_SCALE, ink, (a as f32 * frac) as u32, Weight::Regular);
                 }
             }
             // the wrap ate the space between lines
@@ -756,7 +765,7 @@ impl App {
         for i in (0..=end).rev() {
             let l = &sc.lines[i];
             let (name, color, _) = speaker(l.who);
-            let rows = crate::gfx::wrap(l.text, w - 110, 2);
+            let rows = crate::gfx::wrap(&cast::say(l.text), w - 110, 2);
             let h = (rows.len() as i32 * 28 + 36).max(78);
             y -= h;
             if y < 120 {

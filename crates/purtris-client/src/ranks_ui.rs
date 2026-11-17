@@ -138,7 +138,7 @@ impl App {
                 crate::assets::draw_portrait(&mut self.cv, m.id, if k == 0 { "delighted" } else { "smile" }, 136, y - 4, 48, 255, false);
                 self.cv.reset_clip();
                 self.cv.text_weight(200, y + 6, &e.name, 2, 0xFFFF_FFFF, 255, Weight::Bold);
-                self.cv.text_s(200 + Canvas::text_wb(&e.name, 2, Weight::Bold) + 12, y + 11, m.name, 1, l.dim);
+                self.cv.text_s(200 + Canvas::text_wb(&e.name, 2, Weight::Bold) + 12, y + 11, &crate::cast::name_of(m.id), 1, l.dim);
                 level_badge(&mut self.cv, 536, y + 17, 15, e.level, e.prestige);
                 self.cv.text_s(560, y + 11, ranks::title(e.level), 1, l.dim);
                 self.cv.text_weight(740, y + 6, &ranks::fmt_value(b, e.value), 2, if k == 0 { l.accent } else { l.text }, 255, Weight::Bold);

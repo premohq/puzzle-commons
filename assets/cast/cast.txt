@@ -17,3 +17,4 @@ human luna avatarsample_f
 human kiko hairsample_female
 human jun base_male
 human saki avatarsample_d_darkness
+human hero_m hairsample_male
