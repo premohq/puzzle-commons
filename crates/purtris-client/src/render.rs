@@ -956,11 +956,15 @@ impl Renderer {
         let by = g.fy + fh + fwid + spx as i32 / 2 + 8;
         let br = bar / 2;
         if glassy {
-            cv.soft_shadow(bx, by + 3, bw, bar, br, 8, 150);
-            cv.round_rect(bx - 3, by - 3, bw + 6, bar + 6, br + 3, INK, 255);
-            cv.round_grad(bx, by, bw, bar, br, lighten(color, 100), darken(color, 30), 255);
-            cv.round_ring(bx + 2, by + 2, bw - 4, bar - 4, br - 2, 2, 0xFFFF_FFFF, lighten(color, 120), 200);
-            cv.round_rect(bx + br, by + 4, (bw - 2 * br) / 2, (bar / 8).max(2), 2, 0xFFFF_FFFF, 170);
+            let pad = 14;
+            hud_cached(cv, format!("bar|{}|{}|{:x}", bw, bar, color), bx, by, bw, bar, pad, |c| {
+                let (bx, by) = (pad, pad);
+                c.soft_shadow(bx, by + 3, bw, bar, br, 8, 150);
+                c.round_rect(bx - 3, by - 3, bw + 6, bar + 6, br + 3, INK, 255);
+                c.round_grad(bx, by, bw, bar, br, lighten(color, 100), darken(color, 30), 255);
+                c.round_ring(bx + 2, by + 2, bw - 4, bar - 4, br - 2, 2, 0xFFFF_FFFF, lighten(color, 120), 200);
+                c.round_rect(bx + br, by + 4, (bw - 2 * br) / 2, (bar / 8).max(2), 2, 0xFFFF_FFFF, 170);
+            });
         } else {
             cv.round_rect(bx, by, bw, bar, 6, 0xFF0A_0E1E, 230);
         }
@@ -1554,6 +1558,31 @@ fn stat_pairs(m: &Match, i: usize) -> Vec<(&'static str, String)> {
     }
 }
 
+thread_local! {
+    /// Static HUD parts (outlined words, cards, tabs, name bars) painted once per scale.
+    static HUD: std::cell::RefCell<std::collections::HashMap<String, Canvas>> = std::cell::RefCell::new(std::collections::HashMap::new());
+}
+
+/// Paint a static part once at this canvas's scale and stamp it afterwards. `paint` draws into
+/// an offscreen canvas whose layout origin is the part's (x - pad, y - pad).
+fn hud_cached(cv: &mut Canvas, key: String, x: i32, y: i32, w: i32, h: i32, pad: i32, paint: impl FnOnce(&mut Canvas)) {
+    let k = cv.k;
+    let full = format!("{}|{}", key, k.to_bits());
+    HUD.with(|m| {
+        let mut m = m.borrow_mut();
+        if m.len() > 600 {
+            m.clear();
+        }
+        let img = m.entry(full).or_insert_with(|| {
+            let mut c = Canvas::new(((w + 2 * pad) as f32 * k).ceil() as i32 + 1, ((h + 2 * pad) as f32 * k).ceil() as i32 + 1);
+            c.k = k;
+            paint(&mut c);
+            c
+        });
+        cv.blit(img, x - pad, y - pad, 255);
+    });
+}
+
 /// Where Quad's Hold tab sits: out of the frame's top-left corner. (x, y, w, h, border)
 fn hold_rect(g: &Geom) -> (i32, i32, i32, i32, i32) {
     let fw = g.cols * g.cell;
@@ -1574,6 +1603,17 @@ pub fn chunky_w(text: &str, px: f32) -> f32 {
 }
 
 pub fn chunky(cv: &mut Canvas, cx: f32, cy: f32, text: &str, px: f32, fill: u32, a: u32) {
+    let w = chunky_w(text, px);
+    let o = (px / 9.0).max(1.4);
+    let (bx, by) = ((cx - w / 2.0 - o * 2.0).floor() as i32, (cy - px * 0.8 - o * 2.0).floor() as i32);
+    let (bw, bh) = ((w + o * 4.0).ceil() as i32 + 2, (px * 1.25 + o * 4.0).ceil() as i32 + 2);
+    let key = format!("chunky|{}|{}|{:x}|{}|{}|{}", text, px.to_bits(), fill, a, ((cx - bx as f32) * 4.0) as i32, ((cy - by as f32) * 4.0) as i32);
+    let (lx, ly) = (cx - bx as f32, cy - by as f32);
+    let t = text.to_string();
+    hud_cached(cv, key, bx, by, bw, bh, 0, move |c| chunky_raw(c, lx, ly, &t, px, fill, a));
+}
+
+fn chunky_raw(cv: &mut Canvas, cx: f32, cy: f32, text: &str, px: f32, fill: u32, a: u32) {
     // letters are spaced a little wider than the face's own spacing, so each outline closes
     // around its own letter instead of running into the next one
     let o = (px / 9.0).max(1.4);
@@ -1618,11 +1658,15 @@ fn side_head(w: i32, label: &str) -> i32 {
 fn side_box(cv: &mut Canvas, deco: Option<u32>, x: i32, y: i32, w: i32, h: i32, label: &str, l: &Look) {
     let r = (w / 6).clamp(5, 12);
     if deco.is_some() {
-        cv.soft_shadow(x, y + 4, w, h, r, 7, 140);
-        cv.round_rect(x - 2, y - 2, w + 4, h + 4, r + 2, INK, 255);
-        cv.round_rect(x, y, w, h, r, 0xFFF6_F8FF, 255);
-        let b = (w / 16).clamp(3, 5);
-        cv.round_grad(x + b, y + b, w - 2 * b, h - 2 * b, (r - b).max(2), 0xFF1B_1F33, 0xFF06_070D, 255);
+        let pad = 14;
+        hud_cached(cv, format!("card|{}|{}", w, h), x, y, w, h, pad, |c| {
+            let (x, y) = (pad, pad);
+            c.soft_shadow(x, y + 4, w, h, r, 7, 140);
+            c.round_rect(x - 2, y - 2, w + 4, h + 4, r + 2, INK, 255);
+            c.round_rect(x, y, w, h, r, 0xFFF6_F8FF, 255);
+            let b = (w / 16).clamp(3, 5);
+            c.round_grad(x + b, y + b, w - 2 * b, h - 2 * b, (r - b).max(2), 0xFF1B_1F33, 0xFF06_070D, 255);
+        });
         if !label.is_empty() {
             chunky(cv, (x + w / 2) as f32, y as f32 + 1.0, label, card_label_px(w, label), 0xFFFF_FFFF, 255);
         }
@@ -1642,14 +1686,18 @@ fn hold_tab(cv: &mut Canvas, deco: Option<u32>, x: i32, y: i32, w: i32, h: i32, 
         return;
     };
     let r = (w / 6).clamp(5, 12);
-    // the tab runs a little under the frame so the two read as one piece
-    cv.soft_shadow(x, y + 5, w, h, r, 9, 150);
-    cv.round_rect(x - 3, y - 3, w + 12, h + 6, r + 3, INK, 255);
-    cv.round_grad(x, y, w + 10, h, r, lighten(color, 110), darken(color, 35), 255);
-    cv.round_rect(x + r, y + 3, (w - r) * 3 / 5, 3, 2, 0xFFFF_FFFF, 200);
-    let b = (w / 9).clamp(4, 8);
-    cv.round_rect(x + b - 2, y + b - 2, w - 2 * b + 4, h - 2 * b + 4, (r - b).max(3) + 2, INK, 255);
-    cv.round_grad(x + b, y + b, w - 2 * b, h - 2 * b, (r - b).max(3), 0xFF1B_1F33, 0xFF06_070D, 255);
+    let pad = 16;
+    hud_cached(cv, format!("hold|{}|{}|{:x}", w, h, color), x, y, w + 12, h, pad, |c| {
+        let (x, y) = (pad, pad);
+        // the tab runs a little under the frame so the two read as one piece
+        c.soft_shadow(x, y + 5, w, h, r, 9, 150);
+        c.round_rect(x - 3, y - 3, w + 12, h + 6, r + 3, INK, 255);
+        c.round_grad(x, y, w + 10, h, r, lighten(color, 110), darken(color, 35), 255);
+        c.round_rect(x + r, y + 3, (w - r) * 3 / 5, 3, 2, 0xFFFF_FFFF, 200);
+        let b = (w / 9).clamp(4, 8);
+        c.round_rect(x + b - 2, y + b - 2, w - 2 * b + 4, h - 2 * b + 4, (r - b).max(3) + 2, INK, 255);
+        c.round_grad(x + b, y + b, w - 2 * b, h - 2 * b, (r - b).max(3), 0xFF1B_1F33, 0xFF06_070D, 255);
+    });
     chunky(cv, (x + w / 2) as f32, y as f32 + 1.0, "HOLD", card_label_px(w, "HOLD"), 0xFFFF_FFFF, 255);
 }
 

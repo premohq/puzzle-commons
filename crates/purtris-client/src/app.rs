@@ -1019,7 +1019,7 @@ impl App {
             (_, 1, 0) => "1 vs 1".into(),
             (_, f, a) => format!("{} vs {}", a + 1, f),
         };
-        let (rid, rname) = crate::assets::rival(world);
+        let (_, rname) = crate::assets::rival(world);
         if self.st.characters {
             let tag = format!("Rival: {}", rname);
             let tw = Canvas::text_wb(&tag, 1, Weight::Bold) + 24;
