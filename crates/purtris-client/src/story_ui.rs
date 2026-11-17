@@ -23,16 +23,18 @@ pub struct Select {
     pub back: Box<Screen>,
 }
 
-const SEAT_COLORS: [u32; 6] = [0xFFFF_6B8B, 0xFF4F_B4FF, 0xFF6B_E08A, 0xFFFF_C14D, 0xFFB7_8CFF, 0xFF4F_E0D0];
+pub const SEAT_COLORS: [u32; 6] = [0xFFFF_6B8B, 0xFF4F_B4FF, 0xFF6B_E08A, 0xFFFF_C14D, 0xFFB7_8CFF, 0xFF4F_E0D0];
 
 /// Bots keep their character unless a human took it; then they take the next free one.
 fn resolve(header: &MatchHeader, cursor: &[usize; 6], humans: &[usize]) -> [usize; 6] {
     let n = CAST.len();
     let mut chars = *cursor;
     let taken: Vec<usize> = humans.iter().map(|&i| cursor[i]).collect();
+    // a boss you haven't beaten is never a bot's character either
+    let blocked = |c: &usize| taken.contains(c) || crate::assets::is_hidden(CAST[*c].id);
     for i in 0..6 {
-        if header.seats[i].kind == SeatKind::Bot && taken.contains(&chars[i]) {
-            chars[i] = (0..n).map(|d| (chars[i] + d) % n).find(|c| !taken.contains(c) && !chars.iter().enumerate().any(|(j, x)| j != i && x == c)).unwrap_or(chars[i]);
+        if header.seats[i].kind == SeatKind::Bot && blocked(&chars[i]) {
+            chars[i] = (0..n).map(|d| (chars[i] + d) % n).find(|c| !blocked(c) && !chars.iter().enumerate().any(|(j, x)| j != i && x == c)).unwrap_or(chars[i]);
         }
     }
     chars
@@ -109,8 +111,14 @@ impl App {
                 self.sfx(Sfx::Menu);
             }
             if ok {
-                s.ready[i] = true;
-                self.sfx(Sfx::Select);
+                let id = CAST[s.cursor[i]].id;
+                if crate::assets::is_hidden(id) {
+                    self.sfx(Sfx::Back);
+                    self.say(format!("Beat World {} to unlock this character", cast::boss_world(id).unwrap_or(0) + 1));
+                } else {
+                    s.ready[i] = true;
+                    self.sfx(Sfx::Select);
+                }
             }
             if bk && i == humans[0] {
                 back_out = true;
@@ -121,7 +129,10 @@ impl App {
             for k in 0..n {
                 let (x, y) = pos(k);
                 if mx >= x && mx < x + tile && my >= y && my < y + tile && nav.click && !s.ready[p1] {
-                    if s.cursor[p1] == k {
+                    if s.cursor[p1] == k && crate::assets::is_hidden(CAST[k].id) {
+                        self.sfx(Sfx::Back);
+                        self.say(format!("Beat World {} to unlock this character", cast::boss_world(CAST[k].id).unwrap_or(0) + 1));
+                    } else if s.cursor[p1] == k {
                         s.ready[p1] = true;
                         self.sfx(Sfx::Select);
                     } else {
@@ -166,7 +177,7 @@ impl App {
             let human = s.header.seats[i].kind == SeatKind::Human;
             self.cv.glass(x, card_y, w, card_h, 22, GLASS, GLASS_A);
             self.cv.set_clip(x + 2, card_y + 2, w - 4, card_h - 4);
-            let expr = if s.ready[i] && human { "delighted" } else if human { "smile" } else { "smug" };
+            let expr = if s.ready[i] && human { "delighted" } else if human { "smile" } else { "p-rival" };
             crate::assets::draw_char_ex(&mut self.cv, m.id, expr, x + w / 2, card_y + card_h + 210, 560, 255, j % 2 == 1);
             self.cv.reset_clip();
             let col = if human { SEAT_COLORS[i] } else { 0xFF9A_A3C0 };
@@ -179,8 +190,13 @@ impl App {
             self.cv.text_weight(x + 20, card_y + 14, &who, 1, 0xFF14_1022, 255, Weight::Bold);
             let ny = card_y + card_h - 70;
             self.cv.rect_a(x + 2, ny - 8, w - 4, 76, 0xFF06_0A18, 150);
-            self.cv.text_weight(x + 16, ny, &cast::name_of(m.id), 3, m.color, 255, Weight::Black);
-            self.cv.text_s(x + 16, ny + 36, &cast::say(m.title), 1, l.text);
+            if crate::assets::is_hidden(m.id) {
+                self.cv.text_weight(x + 16, ny, "???", 3, 0xFF9A_A3C0, 255, Weight::Black);
+                self.cv.text_s(x + 16, ny + 36, &format!("Beat World {} to meet them", cast::boss_world(m.id).unwrap_or(0) + 1), 1, l.text);
+            } else {
+                self.cv.text_weight(x + 16, ny, &cast::name_of(m.id), 3, m.color, 255, Weight::Black);
+                self.cv.text_s(x + 16, ny + 36, &cast::say(m.title), 1, l.text);
+            }
             if s.ready[i] && human {
                 let rw = Canvas::text_wb("Ready!", 2, Weight::Black) + 24;
                 self.cv.round_rect(x + w - rw - 10, card_y + 8, rw, 30, 15, l.good, 255);
