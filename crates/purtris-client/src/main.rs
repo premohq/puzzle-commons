@@ -43,6 +43,9 @@ mod png;
 mod pool;
 mod prof;
 mod shots;
+mod light;
+mod blocks;
+mod scene_ui;
 mod story;
 mod story_ui;
 
@@ -56,6 +59,16 @@ fn main() {
     if args.get(1).map(|a| a == "--shots").unwrap_or(false) {
         let w = args.get(3).and_then(|s| s.parse().ok()).unwrap_or(1280);
         shots::run(args.get(2).map(|s| s.as_str()).unwrap_or("shots"), w);
+        return;
+    }
+    if args.get(1).map(|a| a == "--light-shots").unwrap_or(false) {
+        let w = args.get(3).and_then(|s| s.parse().ok()).unwrap_or(1280);
+        shots::lights(args.get(2).map(|s| s.as_str()).unwrap_or("shots"), w);
+        return;
+    }
+    if args.get(1).map(|a| a == "--scene-shots").unwrap_or(false) {
+        let w = args.get(3).and_then(|s| s.parse().ok()).unwrap_or(1280);
+        shots::scenes(args.get(2).map(|s| s.as_str()).unwrap_or("shots"), w);
         return;
     }
     if args.get(1).map(|a| a == "--story-check").unwrap_or(false) {
@@ -110,7 +123,7 @@ fn main() {
     // --scene ID opens straight on a story scene (writers and testers)
     if args.get(1).map(|a| a == "--scene").unwrap_or(false) {
         if let Some(sc) = args.get(2).and_then(|id| cast::scene(id)) {
-            app.screen = app::Screen::Scene { id: sc.id, line: 0, t: 0.0, then: Box::new(app::Screen::Title) };
+            app.screen = app::Screen::Scene(Box::new(scene_ui::SceneView::new(sc.id, app::Screen::Title)));
         }
     }
     let mut present = Presenter::default();

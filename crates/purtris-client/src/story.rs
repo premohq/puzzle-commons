@@ -96,27 +96,6 @@ pub fn scenes() -> &'static [Scene] {
     })
 }
 
-/// Typewriter: how many characters of `text` show after `secs`. Sentences end with a beat,
-/// commas with a breath, so lines read the way they would be said.
-pub fn reveal(text: &str, secs: f32) -> usize {
-    const CHAR: f32 = 1.0 / 52.0;
-    let mut t = 0.0;
-    let chars: Vec<char> = text.chars().collect();
-    for (i, &c) in chars.iter().enumerate() {
-        t += CHAR;
-        if t > secs {
-            return i;
-        }
-        let next_space = chars.get(i + 1).map_or(false, |n| *n == ' ');
-        t += match c {
-            '.' | '!' | '?' if next_space => 0.22,
-            ',' | ':' | ';' if next_space => 0.08,
-            _ => 0.0,
-        };
-    }
-    chars.len()
-}
-
 /// `--story-check DIR WIDTH [ids...]`: parse errors, missing trigger scenes, lines that overflow
 /// the dialogue box, node cards that overflow, node casts that don't match their seats. Every
 /// line of each scene id given is rendered to DIR. Returns the process exit code.
@@ -158,7 +137,7 @@ pub fn check(dir: &str, width: i32, ids: &[String]) -> i32 {
         }
         for (k, l) in s.lines.iter().enumerate() {
             lines += 1;
-            if let Some(e) = fits(l.text, 1090, 3) {
+            if let Some(e) = fits(l.text, crate::scene_ui::TEXT_W, 3) {
                 errors.push(format!("{} line {}: {}", s.id, k + 1, e));
             }
             if l.text.contains('\u{2014}') {
@@ -223,8 +202,16 @@ pub fn check(dir: &str, width: i32, ids: &[String]) -> i32 {
                 continue;
             };
             for line in 0..sc.lines.len() {
-                app.screen = Screen::Scene { id: sc.id, line, t: 30.0, then: Box::new(Screen::Title) };
-                app.frame(None, 1.0 / 60.0);
+                // play into the line so the stage has settled, text fully shown
+                let mut v = crate::scene_ui::SceneView::new(sc.id, Screen::Title);
+                v.seek(line, 30.0, 30.0);
+                app.screen = Screen::Scene(Box::new(v));
+                for _ in 0..24 {
+                    app.frame(None, 1.0 / 60.0);
+                    if let Screen::Scene(v) = &mut app.screen {
+                        v.seek(line, 30.0, 30.0);
+                    }
+                }
                 let p = format!("{}/{}_{:02}.png", dir, sc.id, line + 1);
                 crate::png::write(&p, app.cv.w as usize, app.cv.h as usize, &app.cv.px).unwrap();
             }
