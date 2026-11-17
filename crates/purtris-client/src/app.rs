@@ -232,6 +232,8 @@ pub enum Screen {
     Ranks { page: usize, confirm: bool },
     /// Mira's tour of the modes
     Tour { page: usize, t: f32 },
+    /// naming the story's courier, then `then`
+    NameHero { typed: String, then: Box<Screen> },
     Quit,
 }
 
@@ -504,6 +506,7 @@ impl App {
             Screen::Setup { page, sel } => self.setup_screen(nav, page, sel),
             Screen::Ranks { page, confirm } => self.ranks_screen(nav, page, confirm),
             Screen::Tour { page, t } => self.tour_screen(nav, page, t),
+            Screen::NameHero { typed, then } => self.name_screen(nav, typed, then),
             Screen::Quit => Screen::Quit,
         }
     }
@@ -699,7 +702,7 @@ impl App {
                 ("palette", "Settings".to_string(), "Theme, picture preset, sound, handling and accessibility.".to_string()),
                 ("game-controller", "Controls".to_string(), "Rebind keys. Gamepads are detected automatically.".to_string()),
                 ("question", "How to play".to_string(), "The rules of each style, one page each.".to_string()),
-                ("sparkle", "Tour with Mira".to_string(), "Mira shows you around the modes and controls, with pictures.".to_string()),
+                ("sparkle", crate::cast::say("Tour with Mira").into_owned(), crate::cast::say("Mira shows you around the modes and controls, with pictures.").into_owned()),
                 ("power", "Quit".to_string(), "See you soon!".to_string()),
             ],
         }
@@ -934,7 +937,7 @@ impl App {
                     format!("P{}", i + 1)
                 }
             }
-            SeatKind::Bot => crate::cast::CAST[chars[i]].name.to_string(),
+            SeatKind::Bot => crate::cast::name_of(crate::cast::CAST[chars[i]].id),
             SeatKind::Closed => String::new(),
         })
     }
@@ -950,14 +953,9 @@ impl App {
             Origin::Story { .. } => index("mira"),
             _ => index(self.card.character()),
         };
-        let story_foes: Option<[&str; 4]> = match origin {
-            Origin::Story { world, .. } => Some(match *world {
-                0 => ["nami", "sora", "taro", "emi"],
-                1 => ["hana", "emi", "ren", "sora"],
-                2 => ["yuki", "taro", "kai", "ren"],
-                3 => ["rin", "ren", "sora", "emi"],
-                _ => ["kaede", "kai", "nami", "rin"],
-            }),
+        // the story names who plays every bot seat of every node (content.rs)
+        let story_foes: Option<&[&str]> = match origin {
+            Origin::Story { world, node, .. } => Some(crate::content::WORLDS[(*world).min(4)].nodes[(*node).min(5)].who),
             _ => None,
         };
         let mut human_seen = false;
@@ -977,7 +975,9 @@ impl App {
                     let fans: Vec<&str> = crate::cast::CAST.iter().filter(|m| m.style == si).map(|m| m.id).collect();
                     let mut options: Vec<&str> = Vec::new();
                     if let Some(f) = story_foes {
-                        options.push(f[foe_k.min(3)]);
+                        if let Some(id) = f.get(foe_k) {
+                            options.push(*id);
+                        }
                         foe_k += 1;
                     }
                     options.push(style_champ);
@@ -1034,6 +1034,11 @@ impl App {
         let unlocked = |p: &Progress, wi: usize, ni: usize| unlocked_world(p, wi) && (ni == 0 || p.node(&format!("{}-{}", wi, ni - 1)) & 7 != 0);
         // the story: the prologue first, then each world's introduction on arrival
         const INTROS: [&str; 5] = ["w0_intro", "w1_intro", "w2_intro", "w3_intro", "w4_intro"];
+        // the player names the courier before anything else happens
+        if self.card.hero.is_empty() {
+            self.input.take_typed();
+            return Screen::NameHero { typed: String::new(), then: Box::new(Screen::Story { world, node, diff, chosen, talk }) };
+        }
         if !self.scene_seen("prologue") {
             let back = Screen::Story { world, node, diff, chosen, talk };
             return self.play_scene("prologue", back);
@@ -1094,7 +1099,8 @@ impl App {
             (_, 1, 0) => "1 vs 1".into(),
             (_, f, a) => format!("{} vs {}", a + 1, f),
         };
-        let (rid, rname) = crate::assets::rival(world);
+        let rid = crate::content::node_rival(world, node);
+        let rname = crate::cast::name_of(rid);
         if self.st.characters {
             let expr = if n.level.boss { "angry" } else { "smug" };
             crate::assets::draw_char(&mut self.cv, rid, expr, 1150, 690, 340, 255);
@@ -1106,7 +1112,7 @@ impl App {
         let kw = Canvas::text_w(&kind, 2);
         self.cv.text_s(1040 - kw, 554, &kind, 2, l.accent);
         if talk || !self.st.decorations {
-            self.cv.text_wrap(70, 590, 960, n.line, 2, l.text);
+            self.cv.text_wrap(70, 590, 960, &crate::cast::say(n.line), 2, l.text);
         }
         let human_style = n.level.human.map(|p| p.style().name().to_string()).unwrap_or_else(|| format!("{}   (Tab to change)", style_profile_for(chosen).style().name()));
         self.cv.text_s(70, 650, &format!("You: {}", human_style), 2, l.text);
@@ -1174,16 +1180,22 @@ impl App {
         let mut dev = [None; 6];
         dev[0] = Some(self.default_dev());
         let play = self.start(h, dev, Origin::Story { world, node, diff, chosen: p }, false);
-        const BOSS: [&str; 5] = ["w0_boss", "w1_boss", "w2_boss", "w3_boss", "w4_boss"];
-        const MID: [&str; 5] = ["w0_mid", "w1_mid", "w2_mid", "w3_mid", "w4_mid"];
-        if node == 5 && !self.scene_seen(BOSS[world.min(4)]) {
-            return self.play_scene(BOSS[world.min(4)], play);
+        // before the match: the node's own short scene (wN_nK), and before that the world's
+        // turning points: the quieter scene halfway (node 3) and the champion's scene (node 6)
+        let pre = format!("w{}_n{}", world.min(4), node);
+        let mut next = play;
+        if !self.scene_seen(&pre) {
+            next = self.play_scene(&pre, next);
         }
-        // halfway through each world the story takes a quieter turn
-        if node == 2 && !self.scene_seen(MID[world.min(4)]) {
-            return self.play_scene(MID[world.min(4)], play);
+        let big = match node {
+            2 => format!("w{}_mid", world.min(4)),
+            5 => format!("w{}_boss", world.min(4)),
+            _ => String::new(),
+        };
+        if !big.is_empty() && !self.scene_seen(&big) {
+            next = self.play_scene(&big, next);
         }
-        play
+        next
     }
 
     /// After a story match: the world's victory scene (and the epilogue) the first time its
@@ -1201,6 +1213,13 @@ impl App {
                     back
                 };
                 return self.play_scene(CLEAR[(*world).min(4)], next);
+            }
+        }
+        // the rival (or Kai) reacts to the first win and the first loss at every node
+        if let Origin::Story { world, node, .. } = origin {
+            let id = format!("w{}_n{}_{}", (*world).min(4), node, if won { "win" } else { "lose" });
+            if !self.scene_seen(&id) {
+                return self.play_scene(&id, back);
             }
         }
         back
@@ -1572,7 +1591,7 @@ impl App {
         self.cv.glass(360, 118, 880, 300, 30, ui::GLASS, 205);
         self.cv.tri([(372.0, 380.0), (344.0, 406.0), (380.0, 400.0)], 0xFF2A_3456, 200);
         self.cv.text_weight(392, 136, &format!("{}.  {}", page + 1, head), 3, l.accent, 255, Weight::Black);
-        self.cv.text_wrap(392, 186, 820, body, 2, l.text);
+        self.cv.text_wrap(392, 186, 820, &crate::cast::say(body), 2, l.text);
         for k in 0..parts.len() {
             let on = k == page;
             self.cv.circle(392.0 + k as f32 * 22.0, 398.0, if on { 6.0 } else { 4.0 }, if on { l.accent } else { 0xFF5A_6488 }, 255);
@@ -1585,10 +1604,11 @@ impl App {
             page -= 1;
             self.sfx(Sfx::Menu);
         }
-        let rows = vec![Row::act("Watch Mira's demo"), Row::act("Start the drill"), Row::act("Back to the curriculum")];
+        let rows = vec![Row::act(crate::cast::say("Watch Mira's demo").into_owned()), Row::act("Start the drill"), Row::act("Back to the curriculum")];
         let g = ListGeom { x: 420, y: 470, w: 520, row_h: 52, visible: 3, scale: 2 };
         let ev = list(&mut self.cv, &l, nav, &rows, &mut s, &g, self.t);
-        ui::prompts(&mut self.cv, &l, &[("\u{2190} \u{2192}", "Mira's notes"), ("\u{2191} \u{2193}", "Choose"), ("Enter", "Select"), ("Esc", "Back")]);
+        let notes = crate::cast::say("Mira's notes");
+        ui::prompts(&mut self.cv, &l, &[("\u{2190} \u{2192}", &notes), ("\u{2191} \u{2193}", "Choose"), ("Enter", "Select"), ("Esc", "Back")]);
         match ev {
             LE::Back | LE::Act(2) => {
                 let tr = TRACKS.iter().position(|t| *t == le.track).unwrap_or(0);
@@ -1990,9 +2010,10 @@ impl App {
                 let cx = if right { if crowd { 1180 } else { 1150 } } else if crowd { 100 } else { 130 };
                 let bob = if self.st.reduce_motion { 0 } else { ((self.t * 1.6 + k as f32).sin() * 3.0) as i32 };
                 crate::assets::draw_char_ex(&mut self.cv, member.id, expr, cx, 712 + bob, if crowd { 520 } else { 600 }, 255, right);
-                let nw = Canvas::text_wb(member.name, 2, crate::font::Weight::Black) + 36;
+                let mname = crate::cast::name_of(member.id);
+                let nw = Canvas::text_wb(&mname, 2, crate::font::Weight::Black) + 36;
                 self.cv.round_grad(cx - nw / 2, 640, nw, 36, 18, crate::gfx::lighten(member.color, 40), member.color, 255);
-                self.cv.text_weight(cx - nw / 2 + 18, 646, member.name, 2, 0xFF16_1028, 255, crate::font::Weight::Black);
+                self.cv.text_weight(cx - nw / 2 + 18, 646, &mname, 2, 0xFF16_1028, 255, crate::font::Weight::Black);
             }
         }
         let v = View {
@@ -2348,8 +2369,8 @@ impl App {
         }
         // the cast reacts: Mira cheers or pouts; in story mode the world's rival does the opposite
         if self.st.characters {
-            if let Origin::Story { world, .. } = g.origin {
-                let (rid, _) = crate::assets::rival(world);
+            if let Origin::Story { world, node, .. } = g.origin {
+                let rid = crate::content::node_rival(world, node);
                 crate::assets::draw_char(&mut self.cv, rid, if won { "sad" } else { "delighted" }, 1010, 668, 220, 255);
             }
         }
@@ -2596,9 +2617,10 @@ impl App {
             Row::opt("Bio (160)", if editing == Some(1) { format!("{}_", self.card.bio) } else if self.card.bio.is_empty() { "(empty)".into() } else { "edit".into() }),
             Row::opt("Country (optional)", format!("{}{}", self.card.country, if editing == Some(2) { "_" } else { "" })),
             Row::opt("Favorite style", Style::ALL[self.card.favorite % 4].name()),
+            Row::opt("Story courier", format!("{} ({})", crate::cast::hero(), if self.card.hero_boy { "boy" } else { "girl" })),
             Row::act("BACK"),
         ];
-        let g = ListGeom { x: 90, y: 160, w: 560, row_h: 44, visible: 5, scale: 2 };
+        let g = ListGeom { x: 90, y: 160, w: 560, row_h: 44, visible: 6, scale: 2 };
         let nav2 = if editing.is_some() { Nav::default() } else { *nav };
         let ev = list(&mut self.cv, &l, &nav2, &rows, &mut s, &g, self.t);
         // the card
@@ -2616,7 +2638,11 @@ impl App {
         let stars = self.prog.nodes.values().filter(|v| **v & 7 != 0).count();
         self.cv.text_center(cx + 210, cy + 448, &format!("Story nodes {} / 30     Lessons {}", stars, self.prog.lessons.len()), 1, l.dim);
         match ev {
-            LE::Back | LE::Act(4) => return Screen::Main(ListState::default()),
+            LE::Back | LE::Act(5) => return Screen::Main(ListState::default()),
+            LE::Act(4) | LE::Chg(4, _) => {
+                self.input.take_typed();
+                return Screen::NameHero { typed: String::new(), then: Box::new(Screen::Card(s, None)) };
+            }
             LE::Chg(3, d) => {
                 self.card.favorite = ((self.card.favorite as i32 + d).rem_euclid(4)) as usize;
                 self.card.save();

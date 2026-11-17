@@ -43,6 +43,7 @@ mod png;
 mod pool;
 mod prof;
 mod shots;
+mod story;
 mod story_ui;
 
 fn main() {
@@ -56,6 +57,11 @@ fn main() {
         let w = args.get(3).and_then(|s| s.parse().ok()).unwrap_or(1280);
         shots::run(args.get(2).map(|s| s.as_str()).unwrap_or("shots"), w);
         return;
+    }
+    if args.get(1).map(|a| a == "--story-check").unwrap_or(false) {
+        // every scene line checked against the dialogue box; frames saved for the ids given
+        let w = args.get(3).and_then(|s| s.parse().ok()).unwrap_or(1280);
+        std::process::exit(story::check(args.get(2).map(|s| s.as_str()).unwrap_or("story-shots"), w, &args[args.len().min(4)..]));
     }
     if args.get(1).map(|a| a == "--png-check").unwrap_or(false) {
         // decode a PNG with our own decoder and write it back out (RGB) for comparison
@@ -103,7 +109,7 @@ fn main() {
     app.input.attach(&mut screen.win);
     // --scene ID opens straight on a story scene (writers and testers)
     if args.get(1).map(|a| a == "--scene").unwrap_or(false) {
-        if let Some(sc) = args.get(2).and_then(|id| cast::SCENES.iter().find(|s| s.id == id.as_str())) {
+        if let Some(sc) = args.get(2).and_then(|id| cast::scene(id)) {
             app.screen = app::Screen::Scene { id: sc.id, line: 0, t: 0.0, then: Box::new(app::Screen::Title) };
         }
     }

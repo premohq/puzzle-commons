@@ -468,6 +468,9 @@ HUMANS = [
     ("kiko", "hairsample_female", {"HAIR": 0x7FE0B8, "CLOTH": 0xF2D45C}, "versus regular", "avatarsample_e"),
     ("jun", "base_male", {"HAIR": 0x23262E, "CLOTH": 0xE6E2D8}, "versus regular", "sakurada_fumiriya"),
     ("saki", "avatarsample_d_darkness", {"HAIR": 0xF4EEFF, "CLOTH": 0x26407A}, "versus regular", "avatarsample_g"),
+    # the courier as a boy (the player picks; the game draws him wherever "mira" stands):
+    # a pink hoodie and pink hair, so he reads as the courier, not as Kai
+    ("hero_m", "hairsample_male", {"HAIR": 0xFF9ED8, "Tops": 0xAB6B8A}, "the courier, boy model", "sakurada_fumiriya"),
 ]
 # The creatures were tried and left out of the game (the anime cast reads better together);
 # render them with `cast3d.py <repo> creatures` if they are wanted again.
