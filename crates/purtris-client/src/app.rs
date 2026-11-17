@@ -1996,6 +1996,12 @@ impl App {
             (215 + sx, 44, 850, ah)
         };
         self.match_bg(&g.m, &g.humans, (area.0 - sx, area.1, area.2, area.3));
+        // the boards' outer edges (with their cards), so the characters can stand clear of them
+        let edges = {
+            let gs = crate::render::layout(&g.m, &g.humans, (area.0 - sx, area.1, area.2, area.3));
+            let on: Vec<&crate::render::Geom> = gs.iter().filter(|q| q.cell > 0).collect();
+            (on.iter().map(|q| q.x).min().unwrap_or(area.0), on.iter().map(|q| q.x + q.w).max().unwrap_or(area.0 + area.2))
+        };
         if flank {
             let shown: Vec<usize> = if crowd { vec![active[0], *active.iter().find(|&&i| !g.humans[i]).unwrap_or(&active[1])] } else { active.clone() };
             for (k, &i) in shown.iter().enumerate() {
@@ -2015,10 +2021,15 @@ impl App {
                 } else {
                     "smile"
                 };
-                let right = k == 1 || (active.len() == 1 && false);
-                let cx = if right { if crowd { 1180 } else { 1150 } } else if crowd { 100 } else { 130 };
+                let right = k == 1;
+                // stand in the space beside the boards, never in front of their cards: the
+                // figure is about 0.44 of its height wide
+                let room = if right { 1280 - edges.1 } else { edges.0 } - 8;
+                let ch = (((room + 12) as f32 / 0.44) as i32).min(if crowd { 520 } else { 600 }).max(260);
+                let half = (ch as f32 * 0.22) as i32;
+                let cx = if right { edges.1 + 8 + room - half - 6 } else { room - half - 6 }.clamp(half - 12, 1280 - half + 12);
                 let bob = if self.st.reduce_motion { 0 } else { ((self.t * 1.6 + k as f32).sin() * 3.0) as i32 };
-                crate::assets::draw_char_ex(&mut self.cv, member.id, expr, cx, 712 + bob, if crowd { 520 } else { 600 }, 255, right);
+                crate::assets::draw_char_ex(&mut self.cv, member.id, expr, cx, 712 + bob, ch, 255, right);
                 let nw = Canvas::text_wb(member.name, 2, crate::font::Weight::Black) + 36;
                 self.cv.round_grad(cx - nw / 2, 640, nw, 36, 18, crate::gfx::lighten(member.color, 40), member.color, 255);
                 self.cv.text_weight(cx - nw / 2 + 18, 646, member.name, 2, 0xFF16_1028, 255, crate::font::Weight::Black);

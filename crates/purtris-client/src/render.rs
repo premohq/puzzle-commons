@@ -570,11 +570,10 @@ pub fn style_accent(s: Style) -> u32 {
 
 /// The cabinet around a well, in the seat's colour: ink outline, a chunky glossy frame with a
 /// light inner bevel and halftone dots toward the bottom, the garbage meter's groove in the
-/// left bar, then a dark well tinted toward the seat's colour with a faint grid and the
-/// player's character ghosted large behind the cells. Painted once in real pixels at scale
-/// `k`, offset by WELL_PAD.
+/// left bar, then a dark well tinted toward the seat's colour with a faint grid. Painted once
+/// in real pixels at scale `k`, offset by WELL_PAD.
 #[allow(clippy::too_many_arguments)]
-fn paint_well(k: f32, fw: i32, fh: i32, cell: i32, cols: i32, rows: i32, style: Style, color: u32, r: i32, ghost: Option<&str>) -> Canvas {
+fn paint_well(k: f32, fw: i32, fh: i32, cell: i32, cols: i32, rows: i32, style: Style, color: u32, r: i32) -> Canvas {
     let p = WELL_PAD;
     let mut c = Canvas::new(((fw + 2 * p) as f32 * k).round() as i32, ((fh + 2 * p) as f32 * k).round() as i32);
     c.k = k;
@@ -616,12 +615,6 @@ fn paint_well(k: f32, fw: i32, fh: i32, cell: i32, cols: i32, rows: i32, style: 
     c.round_rect(p - 3, p - 3, fw + 6, fh + 6, r + 1, INK, 255);
     c.round_grad(p, p, fw, fh, r - 2, mix(0xFF0C_1132, color, 46), mix(0xFF04_050E, color, 24), 255);
     c.set_clip(p, p, fw, fh);
-    if let Some(id) = ghost {
-        // the player's character, large and faint, low in the well
-        let size = fw * 13 / 10;
-        crate::assets::draw_portrait(&mut c, id, "smile", p + (fw - size) / 2, p + fh - size * 19 / 20, size, 40, false);
-        c.rect_a(p, p, fw, fh, mix(0xFF04_050E, color, 30), 70);
-    }
     let ga = if style == Style::Chain || style == Style::Capsule { 12 } else { 18 };
     for x in 1..cols {
         c.rect_a(p + x * cell, p, 1, fh, 0xFFFF_FFFF, ga);
@@ -672,7 +665,7 @@ pub struct Renderer {
     pub scene: Scene,
     pub fx: Fx,
     pub geoms: [Geom; 6],
-    wells: std::collections::HashMap<(i32, i32, i32, u32, u32, u8, usize), Canvas>,
+    wells: std::collections::HashMap<(i32, i32, i32, u32, u32, u8), Canvas>,
     /// where each seat's side column has got to (the next free y)
     side_y: [i32; 6],
 }
@@ -812,17 +805,15 @@ impl Renderer {
         let pulse = ((v.t * 6.0).sin() * 0.5 + 0.5) as f32;
         let fwid = frame_w(fw);
         let r = (cell / 3).clamp(8, 16);
-        let member = &crate::cast::CAST[v.chars[i].min(crate::cast::CAST.len() - 1)];
         if glassy {
             // the cabinet never changes during a match, so it is painted once and reused
-            let ghost = if st.characters { Some(v.chars[i]) } else { None };
             let sk = match style {
                 Style::Quad => 0,
                 Style::Chain => 1,
                 Style::Capsule => 2,
                 Style::Panel => 3,
             };
-            let key = (fw, fh, cell, color, cv.k.to_bits(), sk, ghost.unwrap_or(usize::MAX));
+            let key = (fw, fh, cell, color, cv.k.to_bits(), sk);
             if self.wells.len() > 24 {
                 self.wells.clear();
             }
@@ -830,7 +821,7 @@ impl Renderer {
                 let (hx, hy, hw, hh, _) = hold_rect(&g);
                 hold_tab(cv, deco, hx, hy, hw, hh, &l);
             }
-            let wc = self.wells.entry(key).or_insert_with(|| paint_well(cv.k, fw, fh, cell, g.cols, g.rows, style, color, r, ghost.map(|_| member.id)));
+            let wc = self.wells.entry(key).or_insert_with(|| paint_well(cv.k, fw, fh, cell, g.cols, g.rows, style, color, r));
             cv.blit(wc, g.fx - WELL_PAD, g.fy - WELL_PAD, 255);
             // live light on the frame: it heats up with combos and breathes red in danger
             let edge = if danger { mix(color, l.warn, (120.0 + 135.0 * pulse) as u32) } else { lighten(color, 80) };
@@ -939,9 +930,9 @@ impl Renderer {
         }
         // the score: big outlined digits over the frame's bottom edge
         let score = format!("{:08}", board.score());
-        // big, but clear of the portrait at the left end of the name bar
+        // big, but inside the board's width
         let mut spx = score_px(fw).min((2 * fwid + 2) as f32);
-        while spx > 10.0 && chunky_w(&score, spx) > fw as f32 * 0.74 {
+        while spx > 10.0 && chunky_w(&score, spx) > fw as f32 * 0.9 {
             spx -= 1.0;
         }
         let score_y = (g.fy + fh + fwid + 1) as f32;
@@ -965,29 +956,7 @@ impl Renderer {
         } else {
             cv.round_rect(bx, by, bw, bar, 6, 0xFF0A_0E1E, 230);
         }
-        // the portrait pops out of the left end of the bar
-        let ps = bar * 17 / 10;
-        let mut left = bx + br;
-        if st.characters {
-            let expr = if m.outcome != Outcome::Running && m.is_winner(i) {
-                "delighted"
-            } else if !seat.alive {
-                "sad"
-            } else if board.danger() {
-                "shocked"
-            } else if self.fx.flash[i] > 0.3 {
-                "angry"
-            } else {
-                "smile"
-            };
-            let (px, py) = (bx - ps / 6, by + bar - ps);
-            cv.circle((px + ps / 2) as f32, (by + bar / 2) as f32, bar as f32 * 0.62, INK, 255);
-            cv.circle((px + ps / 2) as f32, (by + bar / 2) as f32, bar as f32 * 0.55, member.color, 255);
-            cv.set_clip(px - ps / 4, py - ps / 2, ps + ps / 2, ps + ps / 2 - ((ps - bar) / 2 - bar / 2).max(0) - 1);
-            crate::assets::draw_portrait(cv, member.id, expr, px - ps / 10, py, ps + ps / 5, 255, false);
-            cv.reset_clip();
-            left = px + ps + 2;
-        }
+        let left = bx + br;
         // the style chip at the right end
         let sname = crate::ui::title_case(style.name());
         let chip_w = Canvas::text_wb(&sname, 1, Weight::Bold) + 14;
