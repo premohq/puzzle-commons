@@ -570,10 +570,11 @@ pub fn style_accent(s: Style) -> u32 {
 
 /// The cabinet around a well, in the seat's colour: ink outline, a chunky glossy frame with a
 /// light inner bevel and halftone dots toward the bottom, the garbage meter's groove in the
-/// left bar, then a dark well tinted toward the seat's colour with a faint grid. Painted once
-/// in real pixels at scale `k`, offset by WELL_PAD.
+/// left bar, then a dark well tinted toward the seat's colour with a faint grid and the
+/// player's character ghosted large behind the cells. Painted once in real pixels at scale
+/// `k`, offset by WELL_PAD.
 #[allow(clippy::too_many_arguments)]
-fn paint_well(k: f32, fw: i32, fh: i32, cell: i32, cols: i32, rows: i32, style: Style, color: u32, r: i32) -> Canvas {
+fn paint_well(k: f32, fw: i32, fh: i32, cell: i32, cols: i32, rows: i32, style: Style, color: u32, r: i32, ghost: Option<&str>) -> Canvas {
     let p = WELL_PAD;
     let mut c = Canvas::new(((fw + 2 * p) as f32 * k).round() as i32, ((fh + 2 * p) as f32 * k).round() as i32);
     c.k = k;
@@ -615,6 +616,12 @@ fn paint_well(k: f32, fw: i32, fh: i32, cell: i32, cols: i32, rows: i32, style: 
     c.round_rect(p - 3, p - 3, fw + 6, fh + 6, r + 1, INK, 255);
     c.round_grad(p, p, fw, fh, r - 2, mix(0xFF0C_1132, color, 46), mix(0xFF04_050E, color, 24), 255);
     c.set_clip(p, p, fw, fh);
+    if let Some(id) = ghost {
+        // the player's character, large and faint, low in the well
+        let size = fw * 13 / 10;
+        crate::assets::draw_portrait(&mut c, id, "smile", p + (fw - size) / 2, p + fh - size * 19 / 20, size, 40, false);
+        c.rect_a(p, p, fw, fh, mix(0xFF04_050E, color, 30), 70);
+    }
     let ga = if style == Style::Chain || style == Style::Capsule { 12 } else { 18 };
     for x in 1..cols {
         c.rect_a(p + x * cell, p, 1, fh, 0xFFFF_FFFF, ga);
@@ -665,7 +672,7 @@ pub struct Renderer {
     pub scene: Scene,
     pub fx: Fx,
     pub geoms: [Geom; 6],
-    wells: std::collections::HashMap<(i32, i32, i32, u32, u32, u8), Canvas>,
+    wells: std::collections::HashMap<(i32, i32, i32, u32, u32, u8, usize), Canvas>,
     /// where each seat's side column has got to (the next free y)
     side_y: [i32; 6],
 }
@@ -813,7 +820,8 @@ impl Renderer {
                 Style::Capsule => 2,
                 Style::Panel => 3,
             };
-            let key = (fw, fh, cell, color, cv.k.to_bits(), sk);
+            let ghost = if st.characters { Some(v.chars[i].min(crate::cast::CAST.len() - 1)) } else { None };
+            let key = (fw, fh, cell, color, cv.k.to_bits(), sk, ghost.unwrap_or(usize::MAX));
             if self.wells.len() > 24 {
                 self.wells.clear();
             }
@@ -821,7 +829,7 @@ impl Renderer {
                 let (hx, hy, hw, hh, _) = hold_rect(&g);
                 hold_tab(cv, deco, hx, hy, hw, hh, &l);
             }
-            let wc = self.wells.entry(key).or_insert_with(|| paint_well(cv.k, fw, fh, cell, g.cols, g.rows, style, color, r));
+            let wc = self.wells.entry(key).or_insert_with(|| paint_well(cv.k, fw, fh, cell, g.cols, g.rows, style, color, r, ghost.map(|k| crate::cast::CAST[k].id)));
             cv.blit(wc, g.fx - WELL_PAD, g.fy - WELL_PAD, 255);
             // live light on the frame: it heats up with combos and breathes red in danger
             let edge = if danger { mix(color, l.warn, (120.0 + 135.0 * pulse) as u32) } else { lighten(color, 80) };

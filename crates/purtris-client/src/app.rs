@@ -1115,6 +1115,12 @@ impl App {
         // node card, kept to the bottom band the maps leave clear
         let n = &w.nodes[node];
         let open = unlocked(&self.prog, world, node);
+        // the world's rival stands behind the card, never in front of its text
+        if self.st.characters {
+            let (rid, _) = crate::assets::rival(world);
+            let expr = if n.level.boss { "angry" } else { "smug" };
+            crate::assets::draw_char(&mut self.cv, rid, expr, 1150, 690, 340, 255);
+        }
         self.cv.glass(40, 532, 1200, 160, 26, ui::GLASS, ui::GLASS_A);
         self.cv.text_weight(70, 548, &format!("{}.  {}", node + 1, n.name), 3, 0xFFFF_FFFF, 255, Weight::Black);
         let kind = match (n.level.mode, n.level.foes.len(), n.level.allies.len()) {
@@ -1126,12 +1132,10 @@ impl App {
         };
         let (rid, rname) = crate::assets::rival(world);
         if self.st.characters {
-            let expr = if n.level.boss { "angry" } else { "smug" };
-            crate::assets::draw_char(&mut self.cv, rid, expr, 1150, 690, 340, 255);
             let tag = format!("Rival: {}", rname);
             let tw = Canvas::text_wb(&tag, 1, Weight::Bold) + 24;
-            self.cv.glass(1150 - tw / 2, 664, tw, 24, 12, ui::GLASS, 210);
-            self.cv.text_weight(1150 - tw / 2 + 12, 669, &tag, 1, 0xFFFF_FFFF, 255, Weight::Bold);
+            self.cv.round_rect(1150 - tw / 2, 548, tw, 24, 12, 0xFF05_0814, 200);
+            self.cv.text_weight(1150 - tw / 2 + 12, 553, &tag, 1, 0xFFFF_FFFF, 255, Weight::Bold);
         }
         let kw = Canvas::text_w(&kind, 2);
         self.cv.text_s(1040 - kw, 554, &kind, 2, l.accent);
