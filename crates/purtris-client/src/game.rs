@@ -33,6 +33,8 @@ pub struct Game {
     last: Instant,
     pub paused: bool,
     pub pause_sel: usize,
+    /// the pause menu's list (its focus animation)
+    pub pause_ls: crate::ui::ListState,
     pub countdown: i32,
     pub training: bool,
     ring: VecDeque<Match>,
@@ -78,6 +80,7 @@ impl Game {
             last: Instant::now(),
             paused: false,
             pause_sel: 0,
+            pause_ls: Default::default(),
             countdown: if training { 0 } else { 150 },
             training,
             ring: VecDeque::new(),

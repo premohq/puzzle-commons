@@ -92,24 +92,82 @@ pub struct Canvas {
     backdrop: Option<std::sync::Arc<Backdrop>>,
     /// where screen pixel (0, 0) sits in the backdrop (for a backdrop of a larger, panned image)
     bd_off: (i32, i32),
+    /// draw glass as plain opaque cards (the Potato preset)
+    pub flat_glass: bool,
+}
+
+/// A liquid-glass recipe (see `Canvas::glass_ex`).
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub struct Glass {
+    /// tint color and how much of it covers the scene
+    pub tint: u32,
+    pub tint_a: u32,
+    /// brightness kept from the scene, 0..=256
+    pub dark: u32,
+    /// saturation of the scene in sixteenths (16 = unchanged)
+    pub sat: u32,
+    /// specular rim strength 0..=255
+    pub rim: u32,
+    /// refraction strength, in band widths
+    pub lens: f32,
+    /// frost grain mask (0 = none, 3 or 7 = fine grain)
+    pub frost: u32,
+    /// drop shadow strength (0 = none)
+    pub shadow: u32,
+}
+impl Glass {
+    /// The default recipe for a tint: `tint_a` is how dark the old flat wash was.
+    pub const fn tinted(tint: u32, tint_a: u32) -> Glass {
+        let a = if tint_a > 255 { 255 } else { tint_a };
+        Glass { tint, tint_a: a * 3 / 4, dark: 236 - a / 2, sat: 24, rim: 220, lens: 0.9, frost: 3, shadow: 80 }
+    }
+    fn key(&self) -> i64 {
+        ((self.tint as i64 & 0xFF_FFFF) << 32) | ((self.tint_a as i64) << 24) | ((self.dark as i64 & 0x1FF) << 12) | ((self.sat as i64 & 0x3F) << 6) | (self.frost as i64 & 0x3F)
+    }
+}
+
+/// Cheap per-pixel hash for frost grain.
+#[inline]
+fn grain(x: i32, y: i32) -> u32 {
+    let mut h = (x as u32).wrapping_mul(0x9E37_79B1) ^ (y as u32).wrapping_mul(0x85EB_CA77);
+    h ^= h >> 15;
+    h = h.wrapping_mul(0x2C1B_3C6D);
+    h >> 24
 }
 
 impl Backdrop {
-    fn tinted(&self, tint: u32, ta: u32) -> std::sync::Arc<Vec<u32>> {
+    /// `wide` run through a glass recipe's vibrancy and tint (cached per recipe).
+    fn tinted(&self, g: &Glass) -> std::sync::Arc<Vec<u32>> {
+        let key = g.key();
         let mut c = self.tinted.lock().unwrap();
-        if let Some((_, _, v)) = c.iter().find(|(t, a, _)| *t == tint && *a == ta) {
+        if let Some((_, v)) = c.iter().find(|(kk, _)| *kk == key) {
             return v.clone();
         }
+        let ta = g.tint_a.min(255);
         let t8 = ta + (ta >> 7);
         let it8 = 256 - t8;
+        let tint = g.tint & 0xFF_FFFF;
         let trb = (tint & 0xFF00FF) * t8;
         let tg = (tint & 0x00FF00) * t8;
-        let v: Vec<u32> = self.wide.iter().map(|&s| ((((s & 0xFF00FF) * it8 + trb) >> 8) & 0xFF00FF) | ((((s & 0x00FF00) * it8 + tg) >> 8) & 0x00FF00)).collect();
+        let sat = g.sat as i32;
+        let dark = g.dark;
+        let v: Vec<u32> = self
+            .wide
+            .iter()
+            .map(|&s| {
+                // vibrancy: push colors away from their grey, then tone the light down
+                let (r, gg, b) = (((s >> 16) & 255) as i32, ((s >> 8) & 255) as i32, (s & 255) as i32);
+                let l = (r * 77 + gg * 150 + b * 29) >> 8;
+                let f = |c: i32| -> u32 { (((l + ((c - l) * sat >> 4)).clamp(0, 255) as u32) * dark) >> 8 };
+                let s = (f(r) << 16) | (f(gg) << 8) | f(b);
+                ((((s & 0xFF00FF) * it8 + trb) >> 8) & 0xFF00FF) | ((((s & 0x00FF00) * it8 + tg) >> 8) & 0x00FF00)
+            })
+            .collect();
         let v = std::sync::Arc::new(v);
         if c.len() > 8 {
             c.clear();
         }
-        c.push((tint, ta, v.clone()));
+        c.push((key, v.clone()));
         v
     }
 
@@ -182,7 +240,7 @@ pub struct Backdrop {
     wide: Vec<u32>,
     w: i32,
     /// `wide` pre-tinted, per (tint, alpha): glass interiors are then one vertical blend
-    tinted: std::sync::Mutex<Vec<(u32, u32, std::sync::Arc<Vec<u32>>)>>,
+    tinted: std::sync::Mutex<Vec<(i64, std::sync::Arc<Vec<u32>>)>>,
     /// unique per backdrop, so cached glass can never match a recycled allocation
     id: u64,
 }
@@ -242,7 +300,7 @@ fn lerp_w(a: u32, b: u32, wa: u32, wb: u32) -> u32 {
 impl Canvas {
     /// A pixel canvas (k = 1): sprites, glyphs, offscreen work.
     pub fn new(w: i32, h: i32) -> Self {
-        Canvas { w, h, px: vec![0; (w.max(1) * h.max(1)) as usize], k: 1.0, clip: (0, 0, w, h), backdrop: None, bd_off: (0, 0) }
+        Canvas { w, h, px: vec![0; (w.max(1) * h.max(1)) as usize], k: 1.0, clip: (0, 0, w, h), backdrop: None, bd_off: (0, 0), flat_glass: false }
     }
     pub fn transparent(w: i32, h: i32) -> Self {
         Canvas::new(w, h)
@@ -481,6 +539,44 @@ impl Canvas {
         let r = self.u(r);
         let ring = self.us(ring) + 1;
         self.round_ring_px(x, y, w, h, r, ring, top, bot, a);
+    }
+
+    /// An anti-aliased outline of a rounded rectangle, `thick` layout units wide, its color
+    /// running from `top` to `bot` (a lit rim: bright above, darker below).
+    #[allow(clippy::too_many_arguments)]
+    pub fn rim(&mut self, x: i32, y: i32, w: i32, h: i32, r: i32, thick: f32, top: u32, bot: u32, a: u32) {
+        let _p = crate::prof::scope("round_rect");
+        let (x, y, w, h) = self.edges(x, y, w, h);
+        if w <= 2 || h <= 2 || a == 0 {
+            return;
+        }
+        let r = self.u(r).min(w / 2).min(h / 2).max(0);
+        let th = (thick * self.k).max(0.8);
+        let rf = r as f32;
+        let (wf, hf) = (w as f32, h as f32);
+        let y0 = y.max(self.clip.1);
+        let y1 = (y + h).min(self.clip.3);
+        let (cx0, cx1) = (self.clip.0, self.clip.2);
+        let band = th.ceil() as i32 + 1;
+        par_rows(&mut self.px, self.w as usize, y0, y1, (2 * (w + h) * band) as usize, |py, row| {
+            let ly = (py - y) as f32 + 0.5;
+            let c = mix(top, bot, ((ly / hf) * 255.0) as u32);
+            let qy = (ly - hf / 2.0).abs() - (hf / 2.0 - rf);
+            let full = ly < rf + band as f32 || ly > hf - rf - band as f32;
+            let spans: [(i32, i32); 2] = if full { [(x, x + w), (0, 0)] } else { [(x, x + band.max(r)), (x + w - band.max(r), x + w)] };
+            for (a0, a1) in spans {
+                for px in a0.max(cx0)..a1.min(cx1) {
+                    let lx = (px - x) as f32 + 0.5;
+                    let qx = (lx - wf / 2.0).abs() - (wf / 2.0 - rf);
+                    let d = if qx > 0.0 && qy > 0.0 { rf - (qx * qx + qy * qy).sqrt() } else { rf - qx.max(qy) };
+                    let cov = (d + 0.5).clamp(0.0, 1.0) - (d - th + 0.5).clamp(0.0, 1.0);
+                    if cov > 0.0 {
+                        let p = &mut row[px as usize];
+                        *p = blend_px(*p, c, (cov * a as f32) as u32);
+                    }
+                }
+            }
+        });
     }
 
     pub fn vgrad(&mut self, x: i32, y: i32, w: i32, h: i32, top: u32, bot: u32) {
@@ -725,7 +821,10 @@ impl Canvas {
                     for mx in 0..mw {
                         let qx = (mx as f32 + 0.5 - cx).abs() - (hw - rr);
                         let d = if qx > 0.0 && qy > 0.0 { (qx * qx + qy * qy).sqrt() - rr } else { qx.max(qy) - rr };
-                        if d < sf {
+                        // nothing under the caster itself (its round corners stay clear)
+                        let qcy = (py - (cy - off as f32)).abs() - (hh - rr);
+                        let dc = if qx > 0.0 && qcy > 0.0 { (qx * qx + qcy * qcy).sqrt() - rr } else { qx.max(qcy) - rr };
+                        if d < sf && dc > -0.5 {
                             m[(my * mw + mx) as usize] = lut[((d.max(0.0) * 4.0) as usize).min(lut.len() - 1)];
                         }
                     }
@@ -748,7 +847,7 @@ impl Canvas {
             let my = py - oy;
             let mrow = &mask[(my * mw) as usize..((my + 1) * mw) as usize];
             // the caster covers its own rectangle: only the side bands show in its rows
-            let inner = py >= y && py < y + h;
+            let inner = py >= y + r && py < y + h - r;
             let spans: [(i32, i32); 2] = if inner { [(0, spread), (w + spread, mw)] } else { [(0, mw), (0, 0)] };
             for (a0, a1) in spans {
                 let a0 = a0.max(cx0 - ox);
@@ -784,15 +883,37 @@ impl Canvas {
         self.bd_off = (0, 0);
     }
 
-    /// Liquid glass: refract the blurred scene behind the panel, tint it for readability, add a
-    /// specular sheen and a light rim. `tint_a` 0..255 controls how dark the glass is.
-    /// Rows are shaded in parallel.
+    /// Liquid glass with the default recipe for a tint (kept for older call sites).
     pub fn glass(&mut self, x: i32, y: i32, w: i32, h: i32, r: i32, tint: u32, tint_a: u32) {
+        self.glass_ex(x, y, w, h, r, &Glass::tinted(tint, tint_a));
+    }
+
+    /// Liquid glass: a thick, clear slab over the blurred scene.
+    /// - vibrancy: what is behind is saturated and toned down (not washed flat) and then tinted;
+    /// - refraction: near the rim the slab bends the scene, sampling it from just outside the
+    ///   edge and compressing it (a lens), with a slight red/blue split right at the edge;
+    /// - light: a specular rim that follows a top-left light (a fainter bounce bottom-right), a
+    ///   soft inner glow under it, a darker thickness band inside the edge, a top sheen and a
+    ///   fine frost grain.
+    ///
+    /// Panels are shaded once into an image and cached while their backdrop and shape are the
+    /// same; rows are shaded in parallel.
+    pub fn glass_ex(&mut self, x: i32, y: i32, w: i32, h: i32, r: i32, g: &Glass) {
         let _p = crate::prof::scope("glass");
         if w <= 4 || h <= 4 {
             return;
         }
-        self.soft_shadow(x, y, w, h, r, 10, 70);
+        if g.shadow > 0 {
+            self.soft_shadow(x, y + 2, w, h, r, 18, g.shadow);
+            self.soft_shadow(x, y, w, h, r, 4, g.shadow / 2 + 20);
+        }
+        if self.flat_glass {
+            // cheap look (Potato): an opaque card with a lit top edge and a dark lip
+            let base = mix(g.tint, 0xFF10_1528, 80);
+            self.round_grad(x, y, w, h, r, lighten(base, 22), base, 246);
+            self.rim(x, y, w, h, r, 1.0, 0xFFFF_FFFF, 0xFF00_0000, 70);
+            return;
+        }
         let k = self.k;
         let (x, y, w, h) = self.edges(x, y, w, h);
         let r = self.u(r).min(w / 2).min(h / 2);
@@ -809,103 +930,104 @@ impl Canvas {
         let bd = self.backdrop.clone().unwrap();
         let (box_, boy) = self.bd_off;
         let (cw, ch) = (x1 - x0, y1 - y0);
-        let key: [i64; 12] = [x as i64, y as i64, w as i64, h as i64, r as i64, tint as i64, tint_a as i64, bd.id as i64, box_ as i64, boy as i64, ((x0 as i64) << 32) | y0 as i64, ((x1 as i64) << 32) | y1 as i64];
+        let key: [i64; 12] = [
+            x as i64,
+            y as i64,
+            w as i64,
+            h as i64,
+            r as i64,
+            g.key(),
+            ((g.rim as i64) << 32) | (g.lens * 16.0) as i64,
+            bd.id as i64,
+            box_ as i64,
+            boy as i64,
+            ((x0 as i64) << 32) | y0 as i64,
+            ((x1 as i64) << 32) | y1 as i64,
+        ];
         if let Some(img) = SHAPES.with(|c| c.borrow().glass.get(&key).cloned()) {
             self.composite(&img, x0, y0, cw, ch);
             return;
         }
         let rf = r as f32;
-        let edge = 18.0 * k;
-        let lens = 14.0 * k;
-        let ta = tint_a.min(255);
         let (wf, hf) = (w as f32, h as f32);
-        let sw = self.w as usize;
-        let rim1 = 1.6 * k;
-        let rim2 = 3.0 * k;
+        // the refracting band: wide on big panels, narrower on small pills
+        let edge = (16.0 * k).min(hf * 0.36).min(wf * 0.36).max(2.0);
+        let lens = edge * g.lens;
+        // normals come from a rounder copy of the shape so they turn smoothly
+        let rn = rf.max(edge * 1.1).min(wf / 2.0).min(hf / 2.0);
+        let ca = 1.6 * k;
         let bw = bd.w as usize;
-        let tinted = bd.tinted(tint & 0xFF_FFFF, ta);
+        let tinted = bd.tinted(g);
         let tw: &[u32] = &tinted;
-        let sample = |sx: f32, sy: f32| -> u32 {
+        // the rim concentrates light: there the scene comes through brighter and less tinted
+        let clear = bd.tinted(&Glass { tint_a: g.tint_a / 3, dark: ((g.dark + 300) / 2).min(256), sat: g.sat + 6, ..*g });
+        let cw_: &[u32] = &clear;
+        let rows = bd.rows as usize;
+        let ds = bd.ds as f32;
+        let tap = |sx: f32, sy: f32| -> u32 {
             let sxi = (sx as i32 + box_).clamp(0, bd.w - 1) as usize;
-            let gy = ((sy + boy as f32 + 0.5) / bd.ds as f32 - 0.5).max(0.0);
-            let r0 = (gy as i32).min(bd.rows - 1) as usize;
-            let r1 = (r0 + 1).min(bd.rows as usize - 1);
-            let ty = ((gy - r0 as f32) * 255.0) as u32;
-            mix(tw[r0 * bw + sxi], tw[r1 * bw + sxi], ty) & 0xFF_FFFF
+            let gy = ((sy + boy as f32 + 0.5) / ds - 0.5).max(0.0);
+            let r0 = (gy as usize).min(rows - 1);
+            let r1 = (r0 + 1).min(rows - 1);
+            let wb = (((gy - r0 as f32) * 256.0) as u32).min(256);
+            lerp_w(tw[r0 * bw + sxi], tw[r1 * bw + sxi], 256 - wb, wb)
         };
+        let tap_clear = |sx: f32, sy: f32| -> u32 {
+            let sxi = (sx as i32 + box_).clamp(0, bd.w - 1) as usize;
+            let gy = ((sy + boy as f32 + 0.5) / ds - 0.5).max(0.0);
+            let r0 = (gy as usize).min(rows - 1);
+            let r1 = (r0 + 1).min(rows - 1);
+            let wb = (((gy - r0 as f32) * 256.0) as u32).min(256);
+            lerp_w(cw_[r0 * bw + sxi], cw_[r1 * bw + sxi], 256 - wb, wb)
+        };
+        // light from the top left
+        let (lx_, ly_) = (-0.55f32, -0.835f32);
+        let rim_k = g.rim as f32 / 255.0;
+        let hl_w = 1.5 * k;
+        let glow_w = 9.0 * k;
+        let frost = g.frost;
         let shade_row = |py: i32, row: &mut [u32]| {
             let ly = (py - y) as f32 + 0.5;
             let qy = (ly - hf / 2.0).abs() - (hf / 2.0 - rf);
-            let sheen = ((1.0 - ly / (hf * 0.55)).max(0.0) * 22.0) as u32;
-            // the light rim fades smoothly from the lit top edge to the shaded bottom edge
-            let rim_hi = (120.0 - 75.0 * (ly / hf).clamp(0.0, 1.0)) as u32;
-            // interior span: no lens, rim or coverage (empty near the top and bottom edges)
-            let corner_rows = ly < rf || ly > hf - rf;
+            let qny = (ly - hf / 2.0).abs() - (hf / 2.0 - rn);
+            // sheen: a soft lit band across the top that leans to the left
+            let sheen_row = (1.0 - ly / (hf * 0.5).max(1.0)).max(0.0);
+            let sheen_row = sheen_row * sheen_row * 26.0;
+            // the interior span needs no edge work
+            let corner_rows = ly < rf.max(edge) || ly > hf - rf.max(edge);
             let mx = if corner_rows { edge.max(rf) } else { edge } + 1.0;
             let (ia, ib) = if ly > edge + 1.0 && ly < hf - edge - 1.0 { ((x as f32 + mx).ceil() as i32, (x as f32 + wf - mx).floor() as i32) } else { (x1, x1) };
             let ia = ia.clamp(x0, x1);
             let ib = ib.clamp(x0, x1).max(ia);
             if ib > ia {
-                let gy = ((py as f32 + boy as f32 + 0.5) / bd.ds as f32 - 0.5).max(0.0);
-                let r0 = (gy as i32).min(bd.rows - 1) as usize;
-                let r1 = (r0 + 1).min(bd.rows as usize - 1);
+                let gy = ((py as f32 + boy as f32 + 0.5) / ds - 0.5).max(0.0);
+                let r0 = (gy as usize).min(rows - 1);
+                let r1 = (r0 + 1).min(rows - 1);
                 let wb = (((gy - r0 as f32) * 256.0) as u32).min(256);
                 let wa = 256 - wb;
                 let (sa, sb) = ((ia + box_).clamp(0, bd.w) as usize, (ib + box_).clamp(0, bd.w) as usize);
                 let ra = &tw[r0 * bw + sa..r0 * bw + sb];
                 let rb = &tw[r1 * bw + sa..r1 * bw + sb];
                 let out = &mut row[(ia - x0) as usize..(ib - x0) as usize];
-                if sheen == 0 {
-                    for ((o, &a), &b) in out.iter_mut().zip(ra).zip(rb) {
-                        *o = 0xFF00_0000 | lerp_w(a, b, wa, wb);
+                // the sheen also fades to the right: linear in x across the row
+                let s0 = sheen_row * 1.15;
+                let ds_ = -sheen_row * 0.5 / wf;
+                let mut px = ia;
+                for ((o, &a), &b) in out.iter_mut().zip(ra).zip(rb) {
+                    let mut c = lerp_w(a, b, wa, wb);
+                    let sh = s0 + ds_ * (px - x) as f32;
+                    if sh >= 1.0 {
+                        c = add_sat(c, sh as u32);
                     }
-                } else {
-                    for ((o, &a), &b) in out.iter_mut().zip(ra).zip(rb) {
-                        *o = 0xFF00_0000 | add_sat(lerp_w(a, b, wa, wb), sheen);
+                    if frost > 0 {
+                        let n = grain(px, py) & frost;
+                        c = add_sat(c, n);
                     }
+                    *o = 0xFF00_0000 | c;
+                    px += 1;
                 }
             }
-            // top and bottom bands: between the corners the edge distance is constant along the
-            // row, so coverage, rim and the vertical lens are per row and the horizontal lens is
-            // linear in x
-            let (ma, mb) = if ia == ib {
-                let dv = ly.min(hf - ly);
-                let mm = dv.max(rf);
-                ((x as f32 + mm).ceil() as i32, (x as f32 + wf - mm).floor() as i32)
-            } else {
-                (ia, ia)
-            };
-            let ma = ma.clamp(x0, x1);
-            let mb = mb.clamp(x0, x1).max(ma);
-            if mb > ma {
-                let d = ly.min(hf - ly);
-                if d > -0.5 {
-                    let cov = (d + 0.5).min(1.0);
-                    let kk = if d < edge { (1.0 - d.max(0.0) / edge).powi(2) } else { 0.0 };
-                    let dy = (hf / 2.0 - ly).signum() * kk * lens * ((ly - hf / 2.0).abs() / (hf / 2.0));
-                    let sy = py as f32 - dy + boy as f32;
-                    let gy = ((sy + 0.5) / bd.ds as f32 - 0.5).max(0.0);
-                    let r0 = (gy as i32).min(bd.rows - 1) as usize;
-                    let r1 = (r0 + 1).min(bd.rows as usize - 1);
-                    let wb = (((gy - r0 as f32) * 256.0) as u32).min(256);
-                    let wa = 256 - wb;
-                    let rim = if d < rim1 { rim_hi } else if d < rim2 { 26 } else { 0 };
-                    let add = (sheen + rim).min(255);
-                    let ca = (cov * 255.0) as u32;
-                    // sample x = px - dx, dx = kk * lens * (w/2 - lx) / (w/2)
-                    let slope = kk * lens / (wf / 2.0);
-                    for px in ma..mb {
-                        let lx = (px - x) as f32 + 0.5;
-                        let sx = px as f32 - slope * (wf / 2.0 - lx);
-                        let sxi = (sx as i32 + box_).clamp(0, bd.w - 1) as usize;
-                        let c = add_sat(lerp_w(tw[r0 * bw + sxi], tw[r1 * bw + sxi], wa, wb), add);
-                        row[(px - x0) as usize] = (ca.min(255) << 24) | c;
-                    }
-                }
-            }
-            // whatever the fast spans did not cover gets the full per-pixel treatment
-            let (fa, fb) = if ib > ia { (ia, ib) } else if mb > ma { (ma, mb) } else { (x1, x1) };
-            for px in (x0..fa).chain(fb..x1) {
+            for px in (x0..ia).chain(ib..x1) {
                 let lx = (px - x) as f32 + 0.5;
                 let qx = (lx - wf / 2.0).abs() - (wf / 2.0 - rf);
                 // signed distance to the edge, positive inside (sqrt only in the corners)
@@ -914,32 +1036,80 @@ impl Canvas {
                     continue;
                 }
                 let cov = (d + 0.5).min(1.0);
-                // lens: pull samples toward the centre near the edge
-                let s = if d < edge {
-                    let kk = 1.0 - d.max(0.0) / edge;
-                    let kk = kk * kk;
-                    let dx = (wf / 2.0 - lx).signum() * kk * lens * ((lx - wf / 2.0).abs() / (wf / 2.0));
-                    let dy = (hf / 2.0 - ly).signum() * kk * lens * ((ly - hf / 2.0).abs() / (hf / 2.0));
-                    sample(px as f32 - dx, py as f32 - dy)
+                let d = d.max(0.0);
+                let sheen = sheen_row * (1.15 - 0.5 * lx / wf);
+                if d >= edge {
+                    let mut c = add_sat(tap(px as f32, py as f32), sheen as u32);
+                    if frost > 0 {
+                        c = add_sat(c, grain(px, py) & frost);
+                    }
+                    row[(px - x0) as usize] = (if cov >= 1.0 { 255 } else { (cov * 255.0) as u32 } << 24) | c;
+                    continue;
+                }
+                // outward normal of the rounder shape
+                let qnx = (lx - wf / 2.0).abs() - (wf / 2.0 - rn);
+                let (mut nx, mut ny) = if qnx > 0.0 && qny > 0.0 {
+                    let l = (qnx * qnx + qny * qny).sqrt().max(1e-3);
+                    (qnx / l, qny / l)
+                } else if qnx > qny {
+                    (1.0, 0.0)
                 } else {
-                    sample(px as f32, py as f32)
+                    (0.0, 1.0)
                 };
-                let rim = if d < rim1 { rim_hi } else if d < rim2 { 26 } else { 0 };
-                let c = add_sat(s, (sheen + rim).min(255));
+                if lx < wf / 2.0 {
+                    nx = -nx;
+                }
+                if ly < hf / 2.0 {
+                    ny = -ny;
+                }
+                let t = 1.0 - d / edge;
+                let t2 = t * t;
+                // refraction: sample from outside the rim, compressed toward it
+                let disp = lens * t2 * t;
+                let (bx, by) = (px as f32 + nx * disp, py as f32 + ny * disp);
+                let c = if t > 0.45 {
+                    let cs = ca * (t - 0.45) / 0.55;
+                    let cr = tap(bx + nx * cs, by + ny * cs);
+                    let cg = tap(bx, by);
+                    let cb = tap(bx - nx * cs, by - ny * cs);
+                    (cr & 0xFF0000) | (cg & 0x00FF00) | (cb & 0x0000FF)
+                } else {
+                    tap(bx, by)
+                };
+                let c = if t > 0.2 {
+                    let u = (t - 0.2) / 0.8;
+                    lerp_px(c, tap_clear(bx, by), (u * u * 170.0) as u32)
+                } else {
+                    c
+                };
+                // a bevel: the slab's rounded edge catches the light on the lit side and falls
+                // into shadow on the other
+                let s = nx * lx_ + ny * ly_;
+                let spec = s.max(0.0);
+                let bounce = (-s).max(0.0);
+                let bev = t2 * t.sqrt();
+                let shade = (bev * (26.0 + 70.0 * bounce) * (1.0 - spec)) as u32;
+                let c = lerp_px(c, 0, shade.min(200));
+                // highlights: the rim line, its soft glow, the lit bevel, the sheen
+                let hl = ((hl_w + 0.6 - d) / hl_w).clamp(0.0, 1.0);
+                let gl = (1.0 - d / glow_w).max(0.0);
+                let gl = gl * gl;
+                let spec2 = spec * spec;
+                let b2 = bounce * bounce;
+                let add = hl * (64.0 + 191.0 * spec2.sqrt() * spec + 110.0 * b2) * rim_k + gl * (70.0 * spec2 + 22.0 * b2) * rim_k + bev * 64.0 * spec2 * rim_k + sheen;
+                let c = add_sat(c, (add as u32).min(255));
                 let a = if cov >= 1.0 { 255 } else { (cov * 255.0) as u32 };
                 row[(px - x0) as usize] = (a << 24) | c;
             }
         };
-        // shade into a panel image (color + edge coverage), keep it, composite it
         let mut img = vec![0u32; (cw * ch) as usize];
-        let work = (cw * ch) as usize;
+        let work = (cw * ch) as usize * 2;
         par_rows(&mut img, cw as usize, 0, ch, work, |j, row| shade_row(y0 + j, row));
         let img = std::sync::Arc::new(img);
-        shape_cache_room(work);
+        shape_cache_room(work / 2);
         SHAPES.with(|c| {
             c.borrow_mut().glass.insert(key, img.clone());
         });
-        let _ = sw;
         self.composite(&img, x0, y0, cw, ch);
     }
 

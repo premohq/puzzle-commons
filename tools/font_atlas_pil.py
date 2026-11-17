@@ -33,9 +33,10 @@ for k in range(95):
     if ch == " ":
         lines.append("32 0 %.4f" % max(adv - TRACK, 0.2))
         continue
-    ox = (col * cell + ORIGIN * PPU) * SS
-    by = ((row + 1) * cell - BASE * PPU) * SS
-    d.text((ox, by), ch, font=font, fill=255, anchor="ls")
+    # each glyph on its own cell, so tall marks never bleed into a neighbour
+    g = Image.new("L", (cell * SS, cell * SS), 0)
+    ImageDraw.Draw(g).text((ORIGIN * PPU * SS, (cell - BASE * PPU) * SS), ch, font=font, fill=255, anchor="ls")
+    big.paste(g, (col * cell * SS, row * cell * SS))
     l, _, _, _ = font.getbbox(ch, anchor="ls")
     lines.append("%d %.4f %.4f" % (32 + k, l / (PPU * SS), adv - TRACK))
 small = big.resize((COLS * cell, ROWS * cell), Image.Resampling.BOX)

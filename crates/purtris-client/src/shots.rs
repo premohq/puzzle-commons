@@ -43,6 +43,7 @@ pub fn bench(width: i32) {
     let mut app = App::new(input, synth, false);
     app.st = crate::save::Settings::default();
     app.st.benched = true;
+    app.transitions = false;
     app.apply_settings();
     app.cv = crate::gfx::Canvas::screen(width);
     let h = quick_header(7, Mode::Versus, &[bot(Profile::QuadPpt), bot(Profile::ChainTsu), bot(Profile::CapsuleVs), bot(Profile::PanelPdp)]);
@@ -130,6 +131,7 @@ pub fn run(dir: &str, width: i32) {
     let mut app = App::new(input, synth, false);
     app.st = crate::save::Settings::default();
     app.st.benched = true;
+    app.transitions = false;
     app.apply_settings();
     app.cv = crate::gfx::Canvas::screen(width);
     app.screen = Screen::Title;
@@ -138,6 +140,13 @@ pub fn run(dir: &str, width: i32) {
     app.screen = Screen::Main(ListState::default());
     app.frame(None, 0.016);
     save(&app, dir, "02_menu");
+    app.xmb_cat = 2;
+    app.menu_open = true;
+    app.menu_ls = ListState::at(1);
+    app.frame(None, 0.016);
+    save(&app, dir, "02b_menu_open");
+    app.menu_open = false;
+    app.xmb_cat = 0;
     app.screen = Screen::Story { world: 0, node: 0, diff: 1, chosen: 0, talk: true };
     app.frame(None, 0.016);
     save(&app, dir, "03_story");

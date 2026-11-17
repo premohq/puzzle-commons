@@ -39,7 +39,7 @@ fn hz_choices(modes: &[crate::display::Mode]) -> Vec<u32> {
     v
 }
 use crate::theme::{look, Preset, ThemeId};
-use crate::ui::{self, cycle, ListState, GLASS, GLASS_A};
+use crate::ui::{self, cycle, ListState};
 use minifb::Key;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -255,10 +255,10 @@ impl App {
             let left = deadline - self.t;
             let keep = nav.ok || self.input.key_pressed(Key::Enter);
             let revert = nav.back || left <= 0.0;
-            self.draw_settings_page(tab, &s, &l, nav, false);
+            self.draw_settings_page(tab, &mut s, &l, nav, false);
             self.cv.rect_a(0, 0, 1280, 720, 0xFF00_0000, 120);
-            self.cv.glass(390, 250, 500, 210, 28, GLASS, 200);
-            self.cv.text_weight(430, 276, "Keep these display settings?", 3, 0xFFFF_FFFF, 255, Weight::Black);
+            self.cv.glass_ex(390, 250, 500, 210, 28, &ui::ACCENT);
+            ui::headline(&mut self.cv, 430, 274, "Keep these settings?", 3, 0xFFFF_FFFF, 255);
             let msg = format!("Going back to the previous ones in {} s.", left.ceil().max(0.0) as i32);
             self.cv.text_s(430, 330, &msg, 2, l.dim);
             ui::choice(&mut self.cv, &l, 860, 400, "Enter: keep     Esc: undo", true);
@@ -348,7 +348,7 @@ impl App {
                 next = self.change(cur.id, d);
             }
         }
-        self.draw_settings_page(tab, &s, &l, nav, true);
+        self.draw_settings_page(tab, &mut s, &l, nav, true);
         ui::prompts(&mut self.cv, &l, &[("Q / E", "Tabs"), ("\u{2191} \u{2193}", "Choose"), ("\u{2190} \u{2192}", "Change"), ("Enter", "Select"), ("Esc", "Back")]);
         if let Some(n) = next {
             return n;
@@ -361,22 +361,42 @@ impl App {
         Screen::Settings(s, tab)
     }
 
-    fn draw_settings_page(&mut self, tab: usize, s: &ListState, l: &crate::theme::Look, _nav: &Nav, _live: bool) {
+    fn draw_settings_page(&mut self, tab: usize, s: &mut ListState, l: &crate::theme::Look, nav: &Nav, _live: bool) {
+        const ICONS: [&str; 6] = ["play-circle", "sparkle", "speaker-high", "puzzle-piece", "keyboard", "user-circle"];
         let rows: Vec<&Def> = DEFS.iter().filter(|d| d.tab == tab).collect();
         let (x, w, row_y, row_h) = (80, 720, 196, 58);
-        self.cv.glass(x - 24, row_y - 18, w + 48, rows.len() as i32 * row_h + 36, 26, GLASS, GLASS_A);
+        self.cv.glass_ex(x - 24, row_y - 18, w + 48, rows.len() as i32 * row_h + 36, 26, &ui::DEEP);
         let t = self.t;
+        if !s.placed {
+            s.fy = s.sel as f32;
+            s.placed = true;
+        }
+        ui::ease(&mut s.fy, s.sel as f32, 20.0);
+        if nav.ok || nav.left || nav.right || nav.click {
+            s.press_t = t;
+        }
+        let press = if ui::frame().motion { (1.0 - (t - s.press_t) / 0.16).clamp(0.0, 1.0) } else { 0.0 };
+        // hover ghost and the focus pill
+        if let Some((mx, my)) = nav.mouse {
+            if mx >= x - 12 && mx < x + w + 12 && my >= row_y {
+                let k = ((my - row_y) / row_h) as usize;
+                if k < rows.len() && k != s.sel && rows[k].kind != Kind::Info {
+                    self.cv.round_rect(x - 12, row_y + k as i32 * row_h + 4, w + 24, row_h - 8, (row_h - 8) / 2, 0xFFFF_FFFF, 16);
+                }
+            }
+        }
+        let py = row_y + (s.fy * row_h as f32) as i32;
+        ui::focus_pill(&mut self.cv, l, x - 12, py + 4, w + 24, row_h - 8, press, t);
         for (i, d) in rows.iter().enumerate() {
             let y = row_y + i as i32 * row_h;
             let sel = i == s.sel;
             let cy = y + row_h / 2;
-            if sel {
-                let pulse = ((t * 4.0).sin() * 0.5 + 0.5) * 12.0;
-                self.cv.round_rect(x - 12, y + 4, w + 24, row_h - 8, (row_h - 8) / 2, 0xFFFF_FFFF, 28 + pulse as u32);
-                self.cv.round_rect(x - 12, y + 14, 5, row_h - 28, 2, l.accent, 255);
+            let near = (1.0 - (s.fy - i as f32).abs()).clamp(0.0, 1.0);
+            if i + 1 < rows.len() && !sel && i + 1 != s.sel {
+                self.cv.rect_a(x + 8, y + row_h - 1, w - 16, 1, 0xFFFF_FFFF, 12);
             }
             let col = if d.kind == Kind::Info { l.dim } else if sel { 0xFFFF_FFFF } else { l.text };
-            self.cv.text_weight(x + 6, cy - 12, d.label, 2, col, 255, if sel { Weight::Bold } else { Weight::Regular });
+            ui::text_sw(&mut self.cv, x + 14 + (near * 6.0) as i32, cy - 13, d.label, 2, col, 255, if sel { Weight::Bold } else { Weight::Regular });
             let (v, on, n, max) = self.value(d.id);
             let rx = x + w - 4;
             match d.kind {
@@ -385,8 +405,14 @@ impl App {
                 Kind::Slider => ui::slider(&mut self.cv, l, rx, cy, n, max, &v),
                 Kind::Button => {
                     let bw = 46;
-                    self.cv.round_rect(rx - bw, cy - 18, bw, 36, 18, if sel { l.accent } else { 0xFF1C_2340 }, 240);
-                    let c = if sel { 0xFF14_1022 } else { l.text };
+                    if sel {
+                        self.cv.round_rect(rx - bw - 3, cy - 21, bw + 6, 42, 21, l.accent, 50);
+                        self.cv.round_grad(rx - bw, cy - 18, bw, 36, 18, crate::gfx::lighten(l.accent, 60), l.accent, 255);
+                    } else {
+                        self.cv.round_grad(rx - bw, cy - 18, bw, 36, 18, 0xFF05_0816, 0xFF18_1F3E, 220);
+                    }
+                    self.cv.rim(rx - bw, cy - 18, bw, 36, 18, 1.0, 0xFFFF_FFFF, 0xFF00_0000, 70);
+                    let c = if sel { ui::INK } else { l.text };
                     self.cv.tri([((rx - 18) as f32, cy as f32), ((rx - 28) as f32, cy as f32 - 7.0), ((rx - 28) as f32, cy as f32 + 7.0)], c, 255);
                 }
                 Kind::Info => {
@@ -397,9 +423,9 @@ impl App {
         }
         // description of the selected setting
         if let Some(d) = rows.get(s.sel) {
-            self.cv.glass(848, 178, 376, 300, 26, GLASS, GLASS_A);
-            self.cv.text_weight(872, 198, d.label, 2, l.accent, 255, Weight::Bold);
-            self.cv.text_wrap(872, 236, 330, d.desc, 2, l.text);
+            let by = ui::panel_head(&mut self.cv, 848, 178, 376, 300, ICONS[tab.min(5)], TABS[tab.min(5)], l);
+            ui::text_sw(&mut self.cv, 872, by, d.label, 3, 0xFFFF_FFFF, 255, Weight::Display);
+            self.cv.text_wrap(872, by + 44, 330, d.desc, 2, l.text);
         }
         if self.st.characters {
             crate::assets::draw_char(&mut self.cv, "mira", "smile", 1036, 668, 180, 255);
@@ -445,16 +471,15 @@ impl App {
                 next = self.change(cur.id, d);
             }
         }
-        self.cv.glass(x - 24, y - 18, w + 48, rows.len() as i32 * row_h + 36, 26, GLASS, GLASS_A);
+        self.cv.glass_ex(x - 24, y - 18, w + 48, rows.len() as i32 * row_h + 36, 26, &ui::DEEP);
         for (i, d) in rows.iter().enumerate() {
             let ry = y + i as i32 * row_h;
             let cy = ry + row_h / 2;
             let is_sel = i == *sel;
             if is_sel {
-                self.cv.round_rect(x - 12, ry + 4, w + 24, row_h - 8, (row_h - 8) / 2, 0xFFFF_FFFF, 32);
-                self.cv.round_rect(x - 12, ry + 14, 5, row_h - 28, 2, l.accent, 255);
+                ui::focus_pill(&mut self.cv, &l, x - 12, ry + 4, w + 24, row_h - 8, 0.0, self.t);
             }
-            self.cv.text_weight(x + 6, cy - 12, d.label, 2, if is_sel { 0xFFFF_FFFF } else { l.text }, 255, if is_sel { Weight::Bold } else { Weight::Regular });
+            self.cv.text_weight(x + 14, cy - 12, d.label, 2, if is_sel { 0xFFFF_FFFF } else { l.text }, 255, if is_sel { Weight::Bold } else { Weight::Regular });
             let (v, on, n, max) = self.value(d.id);
             let rx = x + w - 4;
             match d.kind {
