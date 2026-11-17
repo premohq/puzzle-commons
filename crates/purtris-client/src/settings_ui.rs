@@ -276,16 +276,22 @@ impl App {
             return Screen::Settings(s, tab);
         }
 
-        // tabs: Q / E, LB / RB, Tab, or a click
+        // tabs: Q / E, LB / RB, Tab, a click, or arrows: up from the first row puts the focus on
+        // the tab bar, where left / right switch tabs and down (or Enter) goes back to the rows
         let prev_tab = tab;
-        if self.input.key_pressed(Key::E) || self.input.key_pressed(Key::Tab) || (0..4).any(|i| self.input.pad_pressed(i, crate::input::pad::RB)) {
+        let on_tabs = self.settings_tabs;
+        if self.input.key_pressed(Key::E) || self.input.key_pressed(Key::Tab) || (0..4).any(|i| self.input.pad_pressed(i, crate::input::pad::RB)) || (on_tabs && nav.right) {
             tab = (tab + 1) % TABS.len();
         }
-        if self.input.key_pressed(Key::Q) || (0..4).any(|i| self.input.pad_pressed(i, crate::input::pad::LB)) {
+        if self.input.key_pressed(Key::Q) || (0..4).any(|i| self.input.pad_pressed(i, crate::input::pad::LB)) || (on_tabs && nav.left) {
             tab = (tab + TABS.len() - 1) % TABS.len();
         }
-        if let Some(t) = ui::tabs(&mut self.cv, &l, &TABS, tab, 112, nav.mouse, nav.click) {
+        if let Some(t) = ui::tabs_ex(&mut self.cv, &l, &TABS, tab, 112, nav.mouse, nav.click, if on_tabs { Some(self.t) } else { None }) {
             tab = t;
+        }
+        if on_tabs && (nav.down || nav.ok) {
+            self.settings_tabs = false;
+            self.sfx(Sfx::Menu);
         }
         if tab != prev_tab {
             s = ListState::default();
@@ -308,11 +314,16 @@ impl App {
             }
         };
         let mut moved = false;
-        if nav.up {
-            mv(&mut s, -1);
+        let first = rows.iter().position(|d| selectable(d)).unwrap_or(0);
+        if !on_tabs && nav.up {
+            if s.sel == first {
+                self.settings_tabs = true;
+            } else {
+                mv(&mut s, -1);
+            }
             moved = true;
         }
-        if nav.down {
+        if !on_tabs && nav.down {
             mv(&mut s, 1);
             moved = true;
         }
@@ -331,9 +342,14 @@ impl App {
                 }
             }
         }
+        if clicked.is_some() {
+            self.settings_tabs = false;
+        }
         let cur = rows[s.sel];
         let mut next = None;
-        let d = if nav.left {
+        let d = if on_tabs && clicked.is_none() {
+            None
+        } else if nav.left {
             Some(-1)
         } else if nav.right {
             Some(1)
@@ -349,11 +365,17 @@ impl App {
             }
         }
         self.draw_settings_page(tab, &s, &l, nav, true);
-        ui::prompts(&mut self.cv, &l, &[("Q / E", "Tabs"), ("\u{2191} \u{2193}", "Choose"), ("\u{2190} \u{2192}", "Change"), ("Enter", "Select"), ("Esc", "Back")]);
+        if self.settings_tabs {
+            ui::prompts(&mut self.cv, &l, &[("\u{2190} \u{2192}", "Tab"), ("\u{2193}", "Settings"), ("Esc", "Back")]);
+        } else {
+            ui::prompts(&mut self.cv, &l, &[("\u{2191} \u{2193}", "Choose"), ("\u{2190} \u{2192}", "Change"), ("Enter", "Select"), ("Q / E", "Tabs"), ("Esc", "Back")]);
+        }
         if let Some(n) = next {
+            self.settings_tabs = false;
             return n;
         }
         if nav.back {
+            self.settings_tabs = false;
             self.st.save();
             self.sfx(Sfx::Back);
             return Screen::Main(ListState::default());
@@ -368,12 +390,11 @@ impl App {
         let t = self.t;
         for (i, d) in rows.iter().enumerate() {
             let y = row_y + i as i32 * row_h;
-            let sel = i == s.sel;
+            // no row highlight while the tab bar holds the focus
+            let sel = i == s.sel && !self.settings_tabs;
             let cy = y + row_h / 2;
             if sel {
-                let pulse = ((t * 4.0).sin() * 0.5 + 0.5) * 12.0;
-                self.cv.round_rect(x - 12, y + 4, w + 24, row_h - 8, (row_h - 8) / 2, 0xFFFF_FFFF, 28 + pulse as u32);
-                self.cv.round_rect(x - 12, y + 14, 5, row_h - 28, 2, l.accent, 255);
+                crate::ui::highlight(&mut self.cv, x - 12, y + 4, w + 24, row_h - 8, t);
             }
             let col = if d.kind == Kind::Info { l.dim } else if sel { 0xFFFF_FFFF } else { l.text };
             self.cv.text_weight(x + 6, cy - 12, d.label, 2, col, 255, if sel { Weight::Bold } else { Weight::Regular });
@@ -397,12 +418,12 @@ impl App {
         }
         // description of the selected setting
         if let Some(d) = rows.get(s.sel) {
-            self.cv.glass(848, 178, 376, 300, 26, GLASS, GLASS_A);
-            self.cv.text_weight(872, 198, d.label, 2, l.accent, 255, Weight::Bold);
+            self.cv.glass(848, 178, 376, 250, 26, GLASS, GLASS_A);
+            self.cv.text_weight(872, 198, d.label, 2, crate::gfx::lighten(crate::ui::section(), 110), 255, Weight::Bold);
             self.cv.text_wrap(872, 236, 330, d.desc, 2, l.text);
         }
         if self.st.characters {
-            crate::assets::draw_char(&mut self.cv, "mira", "smile", 1036, 668, 180, 255);
+            crate::assets::draw_char_ex(&mut self.cv, "aoi", "p-rival", 1110, 664, 250, 255, true);
         }
     }
 }
@@ -451,8 +472,7 @@ impl App {
             let cy = ry + row_h / 2;
             let is_sel = i == *sel;
             if is_sel {
-                self.cv.round_rect(x - 12, ry + 4, w + 24, row_h - 8, (row_h - 8) / 2, 0xFFFF_FFFF, 32);
-                self.cv.round_rect(x - 12, ry + 14, 5, row_h - 28, 2, l.accent, 255);
+                crate::ui::highlight(&mut self.cv, x - 12, ry + 4, w + 24, row_h - 8, self.t);
             }
             self.cv.text_weight(x + 6, cy - 12, d.label, 2, if is_sel { 0xFFFF_FFFF } else { l.text }, 255, if is_sel { Weight::Bold } else { Weight::Regular });
             let (v, on, n, max) = self.value(d.id);

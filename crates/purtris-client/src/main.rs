@@ -41,6 +41,7 @@ mod png;
 mod pool;
 mod prof;
 mod shots;
+mod blocks;
 mod story;
 mod story_ui;
 

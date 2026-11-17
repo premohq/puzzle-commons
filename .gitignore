@@ -15,3 +15,6 @@ third_party/quaternius_cute_monsters/*
 # no longer used, and not GPL-compatible to redistribute (resale-restricted art)
 third_party/itch/
 assets/chars/
+# Quaternius Universal Animation Library (CC0, 114 MB): poses for tools/blender/cast3d.py
+third_party/quaternius_ual/*
+!third_party/quaternius_ual/LICENSE.txt

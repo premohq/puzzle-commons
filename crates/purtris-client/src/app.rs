@@ -4,7 +4,7 @@
 use crate::audio::{Sfx, SharedSynth};
 use crate::content::*;
 use crate::game::{Game, Origin};
-use crate::gfx::{hex, Canvas};
+use crate::gfx::{darken, lighten, Canvas};
 use crate::input::{key_name, Action, Device, Input, Nav, ACTIONS};
 use crate::render::{fmt_time, Renderer, View, SCENE_NAMES};
 use crate::save::{Card, Progress, Settings};
@@ -31,13 +31,19 @@ pub struct Room {
     pub opts: Opts,
     pub seed: Option<u64>,
     pub list: ListState,
+    /// lobby focus: zone (0 rule pills, 1 seat cards, 2 start) and index in it
+    pub focus: (u8, usize),
+    /// the field being edited on the focused seat card
+    pub edit: Option<usize>,
+    /// the "More rules" dialog is open
+    pub more: bool,
 }
 impl Room {
     pub fn new() -> Self {
         let mut seats = [(SeatChoice::Closed, Profile::QuadPpt, Personality::Builder, 4u8, 0u8); 6];
         seats[0] = (SeatChoice::Human(Device::KbFull), Profile::QuadPpt, Personality::Builder, 4, 0);
         seats[1] = (SeatChoice::Bot, Profile::ChainTsu, Personality::Builder, 4, 0);
-        Room { seats, race: false, target: TargetRule::Direct, opts: Opts::default(), seed: None, list: ListState::default() }
+        Room { seats, race: false, target: TargetRule::Direct, opts: Opts::default(), seed: None, list: ListState::default(), focus: (2, 0), edit: None, more: false }
     }
     pub fn header(&self, seed: u64) -> MatchHeader {
         let mut s = [SeatCfg::default(); 6];
@@ -66,12 +72,12 @@ impl Room {
     fn path_text(&self) -> String {
         let act: Vec<Profile> = self.seats.iter().filter(|s| s.0 != SeatChoice::Closed).map(|s| if self.race { Profile::CapsuleVs } else { s.1 }).collect();
         if act.is_empty() {
-            return "No seats".into();
+            return "Open a seat to start.".into();
         }
         if !self.opts.force_cross && act.iter().all(|&p| p == act[0]) {
-            format!("AUTHENTIC PATH: {} (native units)", act[0].id())
+            "Everyone plays the same style, so attacks arrive just as that style sends them.".into()
         } else {
-            "CROSS PATH: attacks convert through the gauge".into()
+            "Mixed styles: every attack is converted into the target's own kind of garbage.".into()
         }
     }
 }
@@ -87,18 +93,170 @@ const SEAT_DEVICES: [SeatChoice; 9] = [
     SeatChoice::Human(Device::Pad(3)),
     SeatChoice::Bot,
 ];
-fn seat_choice_name(c: SeatChoice) -> String {
-    match c {
-        SeatChoice::Closed => "Closed".into(),
-        SeatChoice::Human(d) => format!("Human: {}", d.name()),
-        SeatChoice::Bot => "Bot".into(),
+/// One-press room setups on the Versus screen: (label, icon).
+const QUICK: [(&str, &str); 4] = [("You vs CPU", "sword"), ("1 vs 1", "game-controller"), ("You vs 3 CPUs", "target"), ("2 vs 2", "user")];
+
+/// Two human devices for a shared screen: gamepads when there are enough, else split the keyboard.
+fn two_devices(p1: Device, pads: usize) -> (Device, Device) {
+    match pads {
+        0 => (Device::KbLeft, Device::KbRight),
+        1 => (Device::KbFull, Device::Pad(0)),
+        _ => match p1 {
+            Device::Pad(_) => (Device::Pad(0), Device::Pad(1)),
+            _ => (Device::KbFull, Device::Pad(0)),
+        },
     }
 }
-const PLAY_PROFILES: [Profile; 6] = [Profile::QuadPpt, Profile::QuadGuideline, Profile::ChainTsu, Profile::CapsuleVs, Profile::CapsuleNes, Profile::PanelPdp];
-fn profile_name(p: Profile) -> String {
-    format!("{} ({})", p.style().name(), p.id())
+
+/// Set the room up as quick setup `k`. Every seat keeps the style it had; teams and seats reset.
+fn apply_quick(room: &mut Room, k: usize, p1: Device, pads: usize) {
+    for s in room.seats.iter_mut() {
+        s.0 = SeatChoice::Closed;
+        s.4 = 0;
+    }
+    room.edit = None;
+    match k {
+        0 => {
+            room.seats[0].0 = SeatChoice::Human(p1);
+            room.seats[1].0 = SeatChoice::Bot;
+        }
+        1 => {
+            let (a, b) = two_devices(p1, pads);
+            room.seats[0].0 = SeatChoice::Human(a);
+            room.seats[1].0 = SeatChoice::Human(b);
+        }
+        2 => {
+            room.seats[0].0 = SeatChoice::Human(p1);
+            for i in 1..4 {
+                room.seats[i].0 = SeatChoice::Bot;
+            }
+        }
+        _ => {
+            // you and a CPU partner against two CPUs
+            room.seats[0].0 = SeatChoice::Human(p1);
+            for i in 1..4 {
+                room.seats[i].0 = SeatChoice::Bot;
+            }
+            room.seats[0].4 = 1;
+            room.seats[1].4 = 1;
+            room.seats[2].4 = 2;
+            room.seats[3].4 = 2;
+        }
+    }
 }
 
+/// Which quick setup the room matches right now, if any.
+fn quick_current(room: &Room) -> Option<usize> {
+    let kinds: Vec<(bool, u8)> = room.seats.iter().filter(|s| s.0 != SeatChoice::Closed).map(|s| (matches!(s.0, SeatChoice::Human(_)), s.4)).collect();
+    let humans = kinds.iter().filter(|k| k.0).count();
+    let teams = kinds.iter().any(|k| k.1 != 0);
+    match (kinds.len(), humans, teams) {
+        (2, 1, false) => Some(0),
+        (2, 2, false) => Some(1),
+        (4, 1, false) => Some(2),
+        (4, 1, true) => Some(3),
+        _ => None,
+    }
+}
+
+/// The fields a seat card can edit: 0 player, 1 style, 2 bot personality, 3 bot strength, 4 team.
+fn seat_fields(room: &Room, i: usize) -> Vec<usize> {
+    let c = room.seats[i].0;
+    let mut v = vec![0];
+    if c != SeatChoice::Closed {
+        if !room.race {
+            v.push(1);
+        }
+        if c == SeatChoice::Bot {
+            v.push(3);
+            v.push(2);
+        }
+        // the team only matters once the room plays in teams (More rules, or the 2 vs 2 setup)
+        if room.seats.iter().any(|s| s.0 != SeatChoice::Closed && s.4 != 0) {
+            v.push(4);
+        }
+    }
+    v
+}
+
+fn seat_field_text(room: &Room, i: usize, f: usize) -> (&'static str, String) {
+    let (c, p, per, st, team) = room.seats[i];
+    match f {
+        0 => (
+            "Player",
+            match c {
+                SeatChoice::Closed => "Empty".into(),
+                SeatChoice::Human(d) => device_short(d),
+                SeatChoice::Bot => "CPU".into(),
+            },
+        ),
+        1 => ("Style", format!("{} {}", ui::title_case(p.style().name()), profile_rules(p).split(' ').next().unwrap_or(""))),
+        2 => ("Plays like", ui::title_case(per.name())),
+        3 => ("Strength", format!("{} of 8", st)),
+        _ => ("Team", if team == 0 { "None".into() } else { format!("Team {}", team) }),
+    }
+}
+
+fn seat_change(room: &mut Room, i: usize, f: usize, d: i32) {
+    let s = &mut room.seats[i];
+    match f {
+        0 => s.0 = cycle(&SEAT_DEVICES, s.0, d),
+        1 => s.1 = cycle(&PLAY_PROFILES, s.1, d),
+        2 => s.2 = cycle(&Personality::ALL, s.2, d),
+        3 => s.3 = ((s.3 as i32 - 1 + d).rem_euclid(8) + 1) as u8,
+        _ => s.4 = ((s.4 as i32 + d).rem_euclid(4)) as u8,
+    }
+}
+
+fn device_short(d: Device) -> String {
+    match d {
+        Device::KbFull => "Keyboard".into(),
+        Device::KbLeft => "Keyboard, left half".into(),
+        Device::KbRight => "Keyboard, right half".into(),
+        Device::Pad(n) => format!("Gamepad {}", n + 1),
+    }
+}
+
+/// The rule set of a profile, in plain words.
+fn profile_rules(p: Profile) -> &'static str {
+    match p {
+        Profile::QuadPpt => "Versus rules",
+        Profile::QuadGuideline => "Guideline rules",
+        Profile::ChainTsu => "Classic rules",
+        Profile::CapsuleVs => "Versus rules",
+        Profile::CapsuleNes => "Original rules",
+        Profile::PanelPdp => "Classic rules",
+    }
+}
+
+fn team_preset_name(room: &Room) -> String {
+    let act: Vec<u8> = room.seats.iter().filter(|s| s.0 != SeatChoice::Closed).map(|s| s.4).collect();
+    if act.iter().all(|&t| t == 0) {
+        "Free for all".into()
+    } else {
+        let n = act.iter().filter(|&&t| t != 0).map(|&t| t).max().unwrap_or(1);
+        format!("{} teams", n)
+    }
+}
+
+/// Free for all, then two teams, then three (when there are enough seats).
+fn next_team_preset(room: &mut Room) {
+    let act: Vec<usize> = (0..6).filter(|&i| room.seats[i].0 != SeatChoice::Closed).collect();
+    if act.is_empty() {
+        return;
+    }
+    let teams = room.seats.iter().filter(|s| s.0 != SeatChoice::Closed).map(|s| s.4).max().unwrap_or(0);
+    let next = match teams {
+        0 => 2,
+        2 if act.len() >= 6 => 3,
+        _ => 0,
+    };
+    for (n, &i) in act.iter().enumerate() {
+        room.seats[i].4 = if next == 0 { 0 } else { 1 + (n as u8 % next) };
+    }
+}
+
+const PLAY_PROFILES: [Profile; 6] = [Profile::QuadPpt, Profile::QuadGuideline, Profile::ChainTsu, Profile::CapsuleVs, Profile::CapsuleNes, Profile::PanelPdp];
 // ------------------------------------------------------------------ results and analyzer
 
 #[allow(dead_code)] // `tick` is kept for a jump-to-moment link in the replay viewer
@@ -206,9 +364,11 @@ pub enum Screen {
     Main(ListState),
     Story { world: usize, node: usize, diff: usize, chosen: usize, talk: bool },
     Versus(Box<Room>),
-    Solo(ListState),
+    /// back target: the Solo tile page
+    Solo,
     Arcade(ListState, usize),
-    Training(ListState),
+    /// back target: the Training tile page
+    Training,
     Curriculum(ListState, usize),
     /// lesson, its action list, and which part Mira is explaining
     Lesson(usize, ListState, usize),
@@ -237,6 +397,202 @@ pub enum Screen {
     Quit,
 }
 
+/// One part of the main menu: its tile, its color and the cast member who stands for it.
+pub struct MenuCat {
+    pub icon: &'static str,
+    pub name: &'static str,
+    pub color: u32,
+    /// cast id and pose sprite (rendered by tools/blender/cast3d.py poses)
+    pub mascot: (&'static str, &'static str),
+}
+pub const MENU_CATS: [MenuCat; 8] = [
+    MenuCat { icon: "map-trifold", name: "Story", color: ui::S_STORY, mascot: ("kai", "p-run") },
+    MenuCat { icon: "sword", name: "Versus", color: ui::S_VERSUS, mascot: ("luna", "p-rival") },
+    MenuCat { icon: "timer", name: "Solo", color: ui::S_SOLO, mascot: ("sora", "p-thumb") },
+    MenuCat { icon: "graduation-cap", name: "Training", color: ui::S_TRAINING, mascot: ("mira", "p-talk") },
+    MenuCat { icon: "film-strip", name: "Replays", color: ui::S_REPLAYS, mascot: ("toma", "p-look") },
+    MenuCat { icon: "user-circle", name: "Profile", color: ui::S_PROFILE, mascot: ("kai", "p-thumb") },
+    MenuCat { icon: "trophy", name: "Ranks", color: ui::S_RANKS, mascot: ("jun", "p-arms") },
+    MenuCat { icon: "gear-six", name: "Settings", color: ui::S_SETTINGS, mascot: ("aoi", "p-rival") },
+];
+/// The host on the top menu, presenting the tiles.
+const HOST_POSE: (&str, &str) = ("mira", "p-present");
+
+/// A few pieces of a style (0 Quad, 1 Chain, 2 Capsule, 3 Panel, 4 one of each) in a window.
+#[allow(clippy::too_many_arguments)]
+fn draw_pieces(cv: &mut Canvas, sprites: &mut crate::theme::Sprites, kind: usize, wx: i32, wy: i32, ww: i32, wh: i32, alpha: u32) {
+    use crate::theme::{CellKind as K, SpriteKey, BLUE, CYAN, GREEN, PURPLE, RED, YELLOW};
+    let pieces: &[(i32, i32, K, u32)] = match kind {
+        0 => &[(0, 1, K::Gem, CYAN), (1, 1, K::Gem, CYAN), (2, 1, K::Gem, CYAN), (3, 1, K::Gem, CYAN), (1, 0, K::Gem, PURPLE), (2, 0, K::Gem, PURPLE), (3, 0, K::Gem, PURPLE), (2, -1, K::Gem, PURPLE)],
+        1 => &[(0, 1, K::Blob, RED), (1, 1, K::Blob, RED), (0, 0, K::Blob, RED), (1, 0, K::Blob, GREEN), (2, 1, K::Blob, BLUE), (2, 0, K::Blob, GREEN), (3, 1, K::Blob, YELLOW)],
+        2 => &[(0, 1, K::HalfL, YELLOW), (1, 1, K::HalfR, RED), (2, 1, K::Virus, BLUE), (3, 1, K::Virus, RED), (2, 0, K::HalfL, BLUE), (3, 0, K::HalfR, BLUE)],
+        3 => &[(0, 1, K::Tile, RED), (1, 1, K::Tile, GREEN), (2, 1, K::Tile, RED), (3, 1, K::Tile, CYAN), (1, 0, K::Tile, PURPLE), (2, 0, K::Tile, RED)],
+        _ => &[(0, 1, K::Gem, PURPLE), (1, 1, K::Blob, RED), (2, 1, K::Virus, BLUE), (3, 1, K::Tile, YELLOW), (1, 0, K::Gem, CYAN), (2, 0, K::Blob, GREEN)],
+    };
+    let cell = ((ww - 20) / 4).min((wh - 12) / 3).min(34);
+    let (bx, by) = (wx + (ww - cell * 4) / 2, wy + wh - 6 - cell * 2);
+    sprites.set_scale(cv.k);
+    cv.set_clip(wx, wy, ww, wh);
+    for &(cx, cy, kd, col) in pieces {
+        let spr = sprites.get(SpriteKey { kind: kd, color: col, size: cell, face: true, pattern: false, flat: false, frame: 0 });
+        cv.blit(spr, bx + cx * cell, by + cy * cell, alpha);
+    }
+    cv.reset_clip();
+}
+
+/// The little picture on an item tile: which pieces to show (None = no picture).
+fn tile_pieces(cat: usize, i: usize) -> Option<usize> {
+    // 0 Quad, 1 Chain, 2 Capsule, 3 Panel, 4 one of each
+    match (cat, i) {
+        (1, 0) => Some(4),
+        (1, 1) => Some(0),
+        (1, 2) => Some(2),
+        (2, 0..=2) => Some(0),
+        (2, 3) => Some(1),
+        (2, 4) => Some(2),
+        (2, 5) => Some(3),
+        (2, _) => Some(4),
+        (3, 0) => Some(4),
+        (3, 1) => Some(0),
+        (3, 2) => Some(3),
+        (3, 3) => Some(1),
+        (3, _) => Some(4),
+        _ => None,
+    }
+}
+const TILE_SKEW: i32 = 14;
+
+/// Top menu: the three modes as big tiles, then five smaller ones.
+fn top_tiles() -> [(i32, i32, i32, i32); 8] {
+    let mut v = [(0, 0, 0, 0); 8];
+    let (x0, x1) = (44, 978);
+    let w1 = (x1 - x0 - 2 * 20) / 3;
+    for (i, t) in v.iter_mut().take(3).enumerate() {
+        *t = (x0 + i as i32 * (w1 + 20), 134, w1, 222);
+    }
+    let w2 = (x1 - x0 - 4 * 16) / 5;
+    for i in 0..5 {
+        v[3 + i] = (x0 + i as i32 * (w2 + 16), 378, w2, 156);
+    }
+    v
+}
+
+/// A section page: its items as a grid of tiles.
+fn item_tiles(n: usize) -> Vec<(i32, i32, i32, i32)> {
+    let n = n.max(1);
+    let cols = match n {
+        1..=3 => n,
+        4 => 2,
+        5 | 6 => 3,
+        7 | 8 => 4,
+        _ => 5,
+    } as i32;
+    let rows = (n as i32 + cols - 1) / cols;
+    let (x0, x1, y0, y1) = (44, 978, 106, 540);
+    let gap = 16;
+    let w = (x1 - x0 - (cols - 1) * gap) / cols;
+    let h = ((y1 - y0 - (rows - 1) * gap) / rows).min(200);
+    let top = y0 + ((y1 - y0) - (rows * h + (rows - 1) * gap)) / 2;
+    (0..n as i32).map(|i| (x0 + (i % cols) * (w + gap), top + (i / cols) * (h + gap), w, h)).collect()
+}
+
+/// Move from tile `cur` toward (dx, dy): the nearest tile within a 60-degree cone.
+fn grid_step(tiles: &[(i32, i32, i32, i32)], cur: usize, dx: i32, dy: i32) -> usize {
+    let mid = |t: &(i32, i32, i32, i32)| (t.0 + t.2 / 2, t.1 + t.3 / 2);
+    let Some(c) = tiles.get(cur).map(mid) else { return cur };
+    let mut best = (i32::MAX, cur);
+    for (i, t) in tiles.iter().enumerate() {
+        let p = mid(t);
+        let (ex, ey) = (p.0 - c.0, p.1 - c.1);
+        let along = ex * dx + ey * dy;
+        let across = (ex * dy - ey * dx).abs();
+        if i == cur || along <= 10 || across * 2 > along * 3 {
+            continue;
+        }
+        let score = along + across * 2;
+        if score < best.0 {
+            best = (score, i);
+        }
+    }
+    best.1
+}
+
+/// A menu tile: drop shadow, border (white when selected), the color, a sheen and halftone.
+fn tile_base(cv: &mut Canvas, x: i32, y: i32, w: i32, h: i32, c: u32, on: bool) {
+    let k = TILE_SKEW;
+    cv.poly(&ui::slant(x + 6, y + 10, w, h, k), 0xFF00_0000, if on { 90 } else { 60 });
+    if on {
+        cv.glow((x + w / 2) as f32, (y + h / 2) as f32, (w.max(h) as f32) * 0.62, lighten(c, 60), 46);
+    }
+    ui::slab(cv, x, y, w, h, k, c, if on { 0xFFFF_FFFF } else { darken(c, 105) }, if on { 5 } else { 3 });
+    cv.poly(&ui::slant_band(x, y, w, h, k, 0.0, 0.40), 0xFFFF_FFFF, if on { 40 } else { 28 });
+    ui::halftone(cv, x, y, w, h, k, lighten(c, 70), if on { 150 } else { 120 }, 11, 3.8, 0.35);
+}
+
+/// A round white badge with an icon in the tile's color.
+fn badge(cv: &mut Canvas, cx: i32, cy: i32, icon: &str, c: u32) {
+    cv.circle(cx as f32 + 1.5, cy as f32 + 3.0, 25.0, darken(c, 120), 255);
+    cv.circle(cx as f32, cy as f32, 25.0, 0xFFFF_FFFF, 255);
+    crate::assets::icon(cv, icon, cx, cy, 30, c, 255);
+}
+
+/// How an item tile's label is set: "Kicker  -  Main" labels show the kicker small above.
+struct TileLabel {
+    kicker: String,
+    lines: Vec<String>,
+    sc: i32,
+    lh: i32,
+    /// height of the whole label block
+    block: i32,
+}
+
+fn label_layout(w: i32, label: &str, sc: i32) -> TileLabel {
+    let (kicker, main) = match label.split_once("  -  ") {
+        Some((a, b)) => (a.trim(), b.trim()),
+        None => ("", label.trim()),
+    };
+    let maxw = w - 34;
+    let mut lines = wrap_display(main, maxw, sc);
+    lines.truncate(2);
+    let lh = (Canvas::px(sc) * 1.08) as i32;
+    let block = lines.len() as i32 * lh + if kicker.is_empty() { 0 } else { 26 };
+    TileLabel { kicker: kicker.to_string(), lines, sc, lh, block }
+}
+
+/// An item tile's label, set along the bottom edge.
+fn item_label(cv: &mut Canvas, x: i32, y: i32, h: i32, lay: &TileLabel, c: u32) {
+    use crate::font::Weight;
+    let ink = darken(c, 130);
+    let mut ty = y + h - 16 - lay.lines.len() as i32 * lay.lh;
+    if !lay.kicker.is_empty() {
+        cv.text_weight(x + 23, ty - 25, &lay.kicker, 2, ink, 160, Weight::Bold);
+        cv.text_weight(x + 22, ty - 26, &lay.kicker, 2, 0xFFFF_FFFF, 240, Weight::Bold);
+    }
+    for ln in lay.lines.iter() {
+        ui::outlined(cv, x + 20, ty, ln, lay.sc, 0xFFFF_FFFF, ink, if lay.sc >= 3 { 3 } else { 2 }, Weight::Display);
+        ty += lay.lh;
+    }
+}
+
+fn wrap_display(s: &str, maxw: i32, sc: i32) -> Vec<String> {
+    use crate::font::Weight;
+    let mut out: Vec<String> = Vec::new();
+    let mut line = String::new();
+    for word in s.split_whitespace() {
+        let trial = if line.is_empty() { word.to_string() } else { format!("{} {}", line, word) };
+        if Canvas::text_wb(&trial, sc, Weight::Display) <= maxw || line.is_empty() {
+            line = trial;
+        } else {
+            out.push(std::mem::take(&mut line));
+            line.push_str(word);
+        }
+    }
+    if !line.is_empty() {
+        out.push(line);
+    }
+    out
+}
+
 pub struct App {
     pub st: Settings,
     pub prog: Progress,
@@ -256,7 +612,15 @@ pub struct App {
     pub bg_world: usize,
     pub xmb_cat: usize,
     pub xmb_item: [usize; 8],
-    pub xmb_anim: (f32, [f32; 8]),
+    /// a section page is open (else the top tiles)
+    pub menu_open: bool,
+    /// time since the menu level changed, and each tile's selection lift
+    pub menu_t: f32,
+    pub menu_lift: [f32; 12],
+    /// on the Settings screen, the keyboard focus is on the tab bar (else on the rows)
+    pub settings_tabs: bool,
+    /// world-map thumbnails for the story tiles, by (world, pixel size)
+    thumbs: std::collections::HashMap<(usize, i32, i32), Canvas>,
     pub last_input_t: f32,
     /// this frame's length in seconds (animations ease with it)
     pub dt: f32,
@@ -313,7 +677,11 @@ impl App {
             bg_world: 0,
             xmb_cat: 0,
             xmb_item: [0; 8],
-            xmb_anim: (0.0, [0.0; 8]),
+            menu_open: false,
+            menu_t: 0.0,
+            menu_lift: [0.0; 12],
+            settings_tabs: false,
+            thumbs: std::collections::HashMap::new(),
             last_input_t: 0.0,
             dt: 1.0 / 60.0,
             monitor: crate::display::Monitor::default(),
@@ -479,16 +847,61 @@ impl App {
         self.host_pose = (p, self.t + 2.0);
     }
 
+    /// Open the main menu on a section's tile page (2 Solo, 3 Training, ...) and draw it now.
+    fn open_section(&mut self, cat: usize, nav: &Nav) -> Screen {
+        if !self.menu_open || self.xmb_cat != cat {
+            self.menu_open = true;
+            self.menu_t = 0.0;
+        }
+        self.xmb_cat = cat;
+        ui::set_section(MENU_CATS[cat].color);
+        self.main_menu(nav, ListState::default())
+    }
+
+    /// The section color of a screen: its part of the game.
+    fn section_of(&self, scr: &Screen) -> u32 {
+        fn of_origin(o: &Origin) -> u32 {
+            match o {
+                Origin::Story { .. } => ui::S_STORY,
+                Origin::Versus(_) => ui::S_VERSUS,
+                Origin::Solo(..) | Origin::Arcade { .. } => ui::S_SOLO,
+                Origin::Lesson(_) | Origin::Sandbox(..) | Origin::Demo(_) => ui::S_TRAINING,
+                Origin::Replay => ui::S_REPLAYS,
+            }
+        }
+        match scr {
+            Screen::Main(_) => MENU_CATS[self.xmb_cat.min(MENU_CATS.len() - 1)].color,
+            Screen::Story { .. } | Screen::Scene { .. } | Screen::NameHero { .. } | Screen::Title | Screen::Boot { .. } => ui::S_STORY,
+            Screen::Versus(_) | Screen::Select(_) => ui::S_VERSUS,
+            Screen::Solo | Screen::Arcade(..) => ui::S_SOLO,
+            Screen::Training | Screen::Curriculum(..) | Screen::Lesson(..) | Screen::Sandbox(..) | Screen::Calc(..) | Screen::Seeds(..) => ui::S_TRAINING,
+            Screen::Replays(..) => ui::S_REPLAYS,
+            Screen::Card(..) => ui::S_PROFILE,
+            Screen::Ranks { .. } => ui::S_RANKS,
+            Screen::Settings(..) | Screen::Controls(..) | Screen::Help(_) | Screen::Setup { .. } | Screen::Tour { .. } | Screen::Quit => ui::S_SETTINGS,
+            Screen::Play(g) => of_origin(&g.origin),
+            Screen::Results(r) => of_origin(&r.game.origin),
+        }
+    }
+
     fn run(&mut self, scr: Screen, nav: &Nav, dt: f32) -> Screen {
+        let c = self.section_of(&scr);
+        ui::set_section(if self.st.theme == ThemeId::Phosphor { crate::theme::theme_tint(ThemeId::Phosphor, c) } else { c });
+        ui::set_clock(self.t, !self.st.reduce_motion);
+        // bosses of unbeaten worlds are silhouettes everywhere except where you actually meet
+        // them: their scenes, their matches and the results right after
+        let meet = matches!(scr, Screen::Scene { .. } | Screen::Play(_) | Screen::Results(_));
+        crate::assets::set_hidden(if meet { Vec::new() } else { crate::cast::locked_bosses(&self.prog) });
         match scr {
             Screen::Boot { frames, start } => self.boot(frames, start),
             Screen::Title => self.title(nav),
             Screen::Main(s) => self.main_menu(nav, s),
             Screen::Story { world, node, diff, chosen, talk } => self.story(nav, world, node, diff, chosen, talk),
             Screen::Versus(room) => self.versus(nav, room),
-            Screen::Solo(s) => self.solo(nav, s),
+            // the old Solo and Training lists are now the menu's tile pages for those sections
+            Screen::Solo => self.open_section(2, nav),
             Screen::Arcade(s, k) => self.arcade(nav, s, k),
-            Screen::Training(s) => self.training(nav, s),
+            Screen::Training => self.open_section(3, nav),
             Screen::Curriculum(s, tr) => self.curriculum(nav, s, tr),
             Screen::Lesson(i, s, page) => self.lesson(nav, i, s, page),
             Screen::Sandbox(s, a, b, c) => self.sandbox(nav, s, a, b, c),
@@ -561,12 +974,17 @@ impl App {
         if self.st.characters {
             crate::assets::draw_char(&mut self.cv, "mira", "delighted", 1120, 700, 330, 255);
         }
-        let a = (((t * 2.5).sin() * 0.5 + 0.5) * 155.0 + 100.0) as u32;
+        // a bright pill that breathes: the one thing to do here
         let msg = "Press Enter or Start";
-        let pw = Canvas::text_wb(msg, 3, Weight::Bold) + 60;
-        self.cv.glass(640 - pw / 2, 580, pw, 52, 26, ui::GLASS, 200);
-        self.cv.text_weight(640 - (pw - 60) / 2, 592, msg, 3, l.accent, a, Weight::Bold);
-        ui::footer(&mut self.cv, "Enter / Start  play      Esc  quit      Arrows / WASD / gamepad / mouse", &l);
+        let grow = if self.st.reduce_motion { 0 } else { (((t * 3.0).sin() * 0.5 + 0.5) * 6.0) as i32 };
+        let pw = Canvas::text_wb(msg, 3, Weight::Display) + 70 + grow * 2;
+        let (px, py, ph) = (640 - pw / 2, 578 - grow / 2, 56 + grow);
+        self.cv.soft_shadow(px, py, pw, ph, ph / 2, 10, 110);
+        self.cv.round_rect(px - 4, py - 4, pw + 8, ph + 8, ph / 2 + 4, 0xFFFF_FFFF, 255);
+        self.cv.round_grad(px, py, pw, ph, ph / 2, 0xFFFF_4F8E, 0xFFE0_2A6C, 255);
+        self.cv.round_rect(px + 20, py + 4, pw - 40, ph * 2 / 5, ph / 5, 0xFFFF_FFFF, 50);
+        ui::outlined(&mut self.cv, 640 - Canvas::text_wb(msg, 3, Weight::Display) / 2, py + (ph - 40) / 2, msg, 3, 0xFFFF_FFFF, 0xFF9A_1446, 2, Weight::Display);
+        let _ = &l;
         if nav.ok || nav.click {
             self.sfx(Sfx::Select);
             return Screen::Main(ListState::default());
@@ -675,7 +1093,14 @@ impl App {
                 ("trophy", "Arcade ladder".to_string(), "Six rivals of rising strength, every style.".to_string()),
             ],
             3 => vec![
-                ("books", "Curriculum".to_string(), "Lessons for every style: the idea, why, a demo, a drill with a par.".to_string()),
+                ("books", "Curriculum".to_string(), {
+                    // progress on the tile: lessons passed and the one to try next (they never gate anything)
+                    let done = self.prog.lessons.len();
+                    match LESSONS.iter().find(|x| !self.prog.lessons.contains_key(x.id)) {
+                        Some(n) => format!("{} of {} lessons passed. Next up: {} ({}).", done, LESSONS.len(), n.title, ui::title_case(n.track)),
+                        None => format!("All {} lessons passed. Replay any of them to beat your par.", LESSONS.len()),
+                    }
+                }),
                 ("flask", "Sandbox".to_string(), "Rewind, frame advance, save states and garbage on demand.".to_string()),
                 ("puzzle-piece", "Panel puzzles".to_string(), "Fixed boards. Clear every panel within the moves.".to_string()),
                 ("calculator", "Calculators".to_string(), "Chain nuisance, attack tables and the cross-play gauge.".to_string()),
@@ -710,154 +1135,163 @@ impl App {
 
     fn main_menu(&mut self, nav: &Nav, _s: ListState) -> Screen {
         use crate::font::Weight;
-        const CATS: [(&str, &str); 8] = [("map-trifold", "Story"), ("sword", "Versus"), ("timer", "Solo"), ("graduation-cap", "Training"), ("film-strip", "Replays"), ("user-circle", "Profile"), ("trophy", "Ranks"), ("gear-six", "Settings")];
         let l = look(self.st.theme);
-        let t = self.t;
         self.bg_blur(60);
-        // the XMB wave ribbon
-        if self.st.theme != ThemeId::Tournament && !self.st.reduce_motion {
-            for layer in 0..3 {
-                let amp = 26.0 + layer as f32 * 12.0;
-                let ph = t * (0.35 + layer as f32 * 0.12) + layer as f32 * 1.7;
-                for x in (0..crate::render::W).step_by(2) {
-                    let fx = x as f32 / 1280.0 * std::f32::consts::TAU;
-                    let y = 300.0 + (fx * 1.1 + ph).sin() * amp + (fx * 2.3 - ph * 0.7).sin() * amp * 0.35;
-                    let thick = 22.0 + layer as f32 * 18.0 + (fx + ph).cos() * 8.0;
-                    let a = 10 + layer as u32 * 4;
-                    self.cv.rect_a(x, (y - thick / 2.0) as i32, 2, thick as i32, 0xFFFF_FFFF, a);
-                    self.cv.rect_a(x, y as i32, 2, 1, 0xFFFF_FFFF, 60);
+        let n_cat = MENU_CATS.len();
+        self.xmb_cat = self.xmb_cat.min(n_cat - 1);
+        let k = 1.0 - (-16.0 * self.dt.clamp(0.0, 0.1)).exp();
+        self.menu_t += self.dt;
+        // ---- input: arrows move between tiles; hover selects, click opens
+        let tiles = if self.menu_open { item_tiles(self.xmb_items(self.xmb_cat).len()) } else { top_tiles().to_vec() };
+        let cur = if self.menu_open { self.xmb_item[self.xmb_cat].min(tiles.len().saturating_sub(1)) } else { self.xmb_cat };
+        let mut next = cur;
+        for (go, dx, dy) in [(nav.left, -1, 0), (nav.right, 1, 0), (nav.up, 0, -1), (nav.down, 0, 1)] {
+            if go {
+                next = grid_step(&tiles, next, dx, dy);
+            }
+        }
+        if nav.wheel != 0 {
+            next = (next as i32 + nav.wheel).clamp(0, tiles.len() as i32 - 1) as usize;
+        }
+        let mut clicked = false;
+        if let Some((mx, my)) = nav.mouse {
+            if let Some(i) = tiles.iter().position(|&(x, y, w, h)| mx >= x && mx < x + w + TILE_SKEW && my >= y && my < y + h) {
+                if nav.click {
+                    clicked = true;
+                }
+                // hovering selects only while the pointer moves; a resting mouse leaves the
+                // arrow keys in charge
+                if nav.moved || nav.click {
+                    next = i;
                 }
             }
         }
-        // input
-        let n_cat = CATS.len();
-        let cat = self.xmb_cat.min(n_cat - 1);
-        let items = self.xmb_items(cat);
-        let mut moved = false;
-        if nav.left && self.xmb_cat > 0 {
-            self.xmb_cat -= 1;
-            moved = true;
-        }
-        if nav.right && self.xmb_cat + 1 < n_cat {
-            self.xmb_cat += 1;
-            moved = true;
-        }
-        let it = &mut self.xmb_item[cat];
-        if *it >= items.len() {
-            *it = 0;
-        }
-        if nav.up && *it > 0 {
-            *it -= 1;
-            moved = true;
-        }
-        if nav.down && *it + 1 < items.len() {
-            *it += 1;
-            moved = true;
-        }
-        if nav.wheel != 0 {
-            *it = ((*it as i32 + nav.wheel).clamp(0, items.len() as i32 - 1)) as usize;
-        }
-        if moved {
+        if next != cur {
             self.sfx(Sfx::Menu);
         }
-        // ease the animation toward the selection
-        let k = 1.0 - (-18.0 * self.dt.clamp(0.0, 0.1)).exp();
-        self.xmb_anim.0 += (self.xmb_cat as f32 - self.xmb_anim.0) * k;
-        for c in 0..8 {
-            let target = self.xmb_item[c] as f32;
-            self.xmb_anim.1[c] += (target - self.xmb_anim.1[c]) * k;
+        if self.menu_open {
+            self.xmb_item[self.xmb_cat] = next;
+        } else {
+            self.xmb_cat = next;
+        }
+        let activate = nav.ok || clicked;
+        // ---- leave or open
+        if nav.back {
+            self.sfx(Sfx::Back);
+            if self.menu_open {
+                self.menu_open = false;
+                self.menu_t = 0.0;
+                return Screen::Main(ListState::default());
+            }
+            return Screen::Title;
         }
         let cat = self.xmb_cat;
         let items = self.xmb_items(cat);
-        let sel = self.xmb_item[cat].min(items.len().saturating_sub(1));
-        // header
-        crate::assets::logo(&mut self.cv, 26, 8, 150);
-        let who = format!("{}", self.card.name);
-        let ww = Canvas::text_wb(&who, 2, Weight::Bold) + 64;
-        self.cv.glass(1130 - ww, 14, ww, 40, 20, ui::GLASS, ui::GLASS_A);
-        crate::assets::icon(&mut self.cv, "user-circle", 1130 - ww + 26, 34, 24, l.accent, 255);
-        self.cv.text_weight(1130 - ww + 46, 23, &who, 2, 0xFFFF_FFFF, 255, Weight::Bold);
-        // category bar
-        let bar_y = 196;
-        let anchor = 300.0;
-        let spacing = 150.0;
-        let mut click_cat = None;
-        for (i, (ic, label)) in CATS.iter().enumerate() {
-            let x = anchor + (i as f32 - self.xmb_anim.0) * spacing;
-            if !(-80.0..1360.0).contains(&x) {
-                continue;
-            }
-            let d = (i as f32 - self.xmb_anim.0).abs().min(1.0);
-            let size = (92.0 - 34.0 * d) as i32;
-            let a = (255.0 - 120.0 * d) as u32;
-            if i == cat {
-                self.cv.glow(x, bar_y as f32, 70.0, l.accent, 40);
-            }
-            crate::assets::icon(&mut self.cv, ic, x as i32 + 2, bar_y + 3, size, 0xFF00_0000, a / 3);
-            crate::assets::icon(&mut self.cv, ic, x as i32, bar_y, size, 0xFFFF_FFFF, a);
-            if i == cat {
-                let lw = Canvas::text_wb(label, 2, Weight::Bold);
-                self.cv.text_weight(x as i32 - lw / 2 + 1, bar_y + 55, label, 2, 0xFF00_0000, 140, Weight::Bold);
-                self.cv.text_weight(x as i32 - lw / 2, bar_y + 54, label, 2, 0xFFFF_FFFF, 255, Weight::Bold);
-            }
-            if let Some((mx, my)) = nav.mouse {
-                if nav.click && (mx - x as i32).abs() < 50 && (my - bar_y).abs() < 50 {
-                    click_cat = Some(i);
-                }
-            }
-        }
-        // items: the selected one sits just under the bar; earlier ones scroll above it
-        let col_x = anchor as i32 - 30;
-        let row_h = 64.0;
-        let off = self.xmb_anim.1[cat];
-        let mut click_item = None;
-        for (i, (ic, label, _)) in items.iter().enumerate() {
-            let rel = i as f32 - off;
-            let y = if rel < -0.01 { bar_y as f32 - 70.0 + rel * row_h * 0.8 } else { bar_y as f32 + 112.0 + rel * row_h };
-            if !(-40.0..760.0).contains(&y) {
-                continue;
-            }
-            let is_sel = i == sel;
-            let d = rel.abs().min(1.0);
-            let a = if rel < -0.01 { 90 } else { (255.0 - 90.0 * d) as u32 };
-            let isz = if is_sel { 52 } else { 38 };
-            if is_sel {
-                let tw = Canvas::text_wb(label, 3, Weight::Bold) + isz + 60;
-                self.cv.glass(col_x - 34, y as i32 - 32, tw, 64, 32, ui::GLASS, 120);
-            }
-            crate::assets::icon(&mut self.cv, ic, col_x, y as i32, isz, if is_sel { l.accent } else { 0xFFFF_FFFF }, a);
-            let sc = if is_sel { 3 } else { 2 };
-            let ty = y as i32 - (Canvas::px(sc) * 0.4) as i32 - 2;
-            let wgt = if is_sel { Weight::Bold } else { Weight::Regular };
-            self.cv.text_weight(col_x + 42 + 1, ty + 1, label, sc, 0xFF00_0000, a / 2, wgt);
-            self.cv.text_weight(col_x + 42, ty, label, sc, 0xFFFF_FFFF, a, wgt);
-            if let Some((mx, my)) = nav.mouse {
-                if nav.click && mx > col_x - 40 && mx < col_x + 600 && (my - y as i32).abs() < 28 {
-                    click_item = Some(i);
-                }
-            }
-        }
-        // description strip
-        if let Some((_, _, desc)) = items.get(sel) {
-            self.cv.glass(40, 636, 1200, 50, 25, ui::GLASS, ui::GLASS_A);
-            self.cv.text_s(70, 650, desc, 2, l.text);
-        }
-        self.host(1150.0, 560.0, 46.0);
-        ui::footer(&mut self.cv, "\u{2190} \u{2192}  category      \u{2191} \u{2193}  item      Enter / A  open      Esc / B  back", &l);
-        if let Some(c) = click_cat {
-            self.xmb_cat = c;
+        if activate && !self.menu_open && items.len() > 1 {
+            self.sfx(Sfx::Select);
+            self.menu_open = true;
+            self.menu_t = 0.0;
             return Screen::Main(ListState::default());
         }
-        let activate = nav.ok || click_item.map(|i| i == sel).unwrap_or(false);
-        if let Some(i) = click_item {
-            if i != sel {
-                self.xmb_item[cat] = i;
-                return Screen::Main(ListState::default());
+        let sel = if self.menu_open { self.xmb_item[cat].min(items.len().saturating_sub(1)) } else { 0 };
+        // ---- draw
+        let c = ui::section();
+        let n = tiles.len();
+        for (i, lift) in self.menu_lift.iter_mut().enumerate() {
+            let on = if self.menu_open { i == sel } else { i == cat };
+            *lift += ((on as u32 as f32) - *lift) * k;
+            if i >= n {
+                *lift = 0.0;
             }
         }
-        if nav.back {
-            self.sfx(Sfx::Back);
-            return Screen::Title;
+        let bob = |t: f32| if self.st.reduce_motion { 0 } else { ((t * 2.2).sin() * 3.0) as i32 };
+        if !self.menu_open {
+            crate::assets::logo(&mut self.cv, 26, 8, 150);
+            let who = self.card.name.to_string();
+            let ww = Canvas::text_wb(&who, 2, Weight::Bold) + 64;
+            self.cv.glass(1130 - ww, 14, ww, 40, 20, ui::GLASS, ui::GLASS_A);
+            crate::assets::icon(&mut self.cv, "user-circle", 1130 - ww + 26, 34, 24, l.accent, 255);
+            self.cv.text_weight(1130 - ww + 46, 23, &who, 2, 0xFFFF_FFFF, 255, Weight::Bold);
+            // the host stands beside the tiles, talking you through them
+            if self.st.characters {
+                let (id, pose) = HOST_POSE;
+                crate::assets::draw_char_ex(&mut self.cv, id, pose, 1128, 662 + bob(self.t) / 3, 470, 255, true);
+            }
+            for (i, mc) in MENU_CATS.iter().enumerate() {
+                let (x, y, w, h) = tiles[i];
+                let lift = self.menu_lift[i];
+                let y = y - (lift * 7.0) as i32;
+                let on = i == cat;
+                tile_base(&mut self.cv, x, y, w, h, mc.color, on);
+                if i < 3 {
+                    // a big tile: the mode's character standing in it, head above the edge
+                    if self.st.characters {
+                        let (id, pose) = mc.mascot;
+                        let fy = y + h - 4 + if on { bob(self.t + i as f32) } else { 0 };
+                        self.cv.set_clip(x - 40, 0, w + 80, y + h - 4);
+                        crate::assets::draw_char_ex(&mut self.cv, id, pose, x + w - 84, fy + 26, 300, 255, i == 1);
+                        self.cv.reset_clip();
+                    }
+                    badge(&mut self.cv, x + 46, y + 42, mc.icon, mc.color);
+                    ui::outlined(&mut self.cv, x + 24, y + h - 62, mc.name, 4, 0xFFFF_FFFF, darken(mc.color, 130), 3, Weight::Display);
+                } else {
+                    crate::assets::icon(&mut self.cv, mc.icon, x + w / 2 + 9, y + 60, 66, darken(mc.color, 110), 255);
+                    crate::assets::icon(&mut self.cv, mc.icon, x + w / 2 + 7, y + 56, 66, 0xFFFF_FFFF, 255);
+                    let tw = Canvas::text_wb(mc.name, 3, Weight::Display);
+                    ui::outlined(&mut self.cv, x + (w - tw) / 2 + 4, y + h - 50, mc.name, 3, 0xFFFF_FFFF, darken(mc.color, 130), 3, Weight::Display);
+                }
+            }
+            let desc = match cat {
+                0 => "Walk the overworld: five worlds, a rival in each, and a mystery underneath.",
+                1 => "Up to six players on one machine, every one in the style they like.",
+                2 => "Sprints, marathons and endless runs. Records stay on this machine.",
+                3 => "Lessons with Mira, the sandbox, puzzles and calculators.",
+                4 => "Watch saved matches, or take one over from any moment.",
+                5 => "Your name, your favorite style, your card.",
+                6 => "Your level, prestige and nine leaderboards.",
+                _ => "Picture, sound, controls, and Mira's tour.",
+            };
+            ui::desc_strip(&mut self.cv, 40, 560, 950, 64, desc);
+            ui::prompts(&mut self.cv, &l, &[("\u{2190}\u{2192}", "Choose"), ("Enter", "Open"), ("Esc", "Title")]);
+        } else {
+            let mc = &MENU_CATS[cat];
+            ui::banner(&mut self.cv, mc.name, c);
+            if self.st.characters {
+                let (id, pose) = mc.mascot;
+                let slide = if self.st.reduce_motion { 0.0 } else { (1.0 - (self.menu_t * 5.0).min(1.0)).powi(2) * 160.0 };
+                crate::assets::draw_char_ex(&mut self.cv, id, pose, 1124 + slide as i32, 662 + bob(self.t) / 3, 480, 255, true);
+            }
+            // one label size for the whole page: the big one only if every label fits on a line
+            let page_sc = if items.iter().zip(tiles.iter()).all(|((_, lb, _), t)| label_layout(t.2, lb, 3).lines.len() == 1) { 3 } else { 2 };
+            for (i, (ic, label, desc)) in items.iter().enumerate() {
+                let (x, y, w, h) = tiles[i];
+                let lift = self.menu_lift[i];
+                let y = y - (lift * 6.0) as i32;
+                let on = i == sel;
+                let locked = desc.starts_with("Locked");
+                let shade = if locked { 0xFF6A_7088 } else if i % 2 == 1 { lighten(c, 14) } else { c };
+                tile_base(&mut self.cv, x, y, w, h, shade, on);
+                let lay = label_layout(w, label, page_sc);
+                // the picture sits between the top edge and the label
+                let wh = (h * 11 / 20).min(y + h - 18 - lay.block - 12 - (y + 16));
+                if wh >= 40 {
+                    self.tile_art(cat, i, x, y, w, wh, locked);
+                }
+                // leaderboards show their record in the middle of the tile
+                if cat == 6 && i > 0 {
+                    let top = desc.strip_prefix("Top: ").and_then(|d| d.split(" by ").next()).unwrap_or("No score yet");
+                    let sc = if top.len() > 9 { 2 } else { 3 };
+                    let tw = Canvas::text_wb(top, sc, Weight::Display);
+                    let ty = y + 62 + (h - 62 - lay.block - 18 - (Canvas::px(sc) * 1.2) as i32) / 2;
+                    ui::outlined(&mut self.cv, x + (w - tw) / 2 + 4, ty, top, sc, 0xFFFF_F0A0, darken(shade, 130), 2, Weight::Display);
+                }
+                badge(&mut self.cv, x + 42, y + 40, if locked { "question" } else { ic }, shade);
+                item_label(&mut self.cv, x, y, h, &lay, shade);
+            }
+            if let Some((_, _, desc)) = items.get(sel) {
+                ui::desc_strip(&mut self.cv, 40, 560, 950, 64, desc);
+            }
+            ui::prompts(&mut self.cv, &l, &[("\u{2190}\u{2192}", "Choose"), ("Enter", "Start"), ("Esc", "Back")]);
         }
         if !activate {
             return Screen::Main(ListState::default());
@@ -926,6 +1360,45 @@ impl App {
         }
     }
 
+    /// A tile's picture window: the world's map for story items, a few pieces for the styles.
+    #[allow(clippy::too_many_arguments)]
+    fn tile_art(&mut self, cat: usize, i: usize, x: i32, y: i32, w: i32, wh: i32, locked: bool) {
+        let (wx, wy) = (x + w * 2 / 5 + 4, y + 16);
+        let (ww, wh) = (w - w * 2 / 5 - 16, wh.min(120));
+        if cat == 0 && !self.maps.is_empty() {
+            let wi = i.saturating_sub(1).min(self.maps.len() - 1);
+            let (pw, ph) = (self.cv.us(ww), self.cv.us(wh));
+            let key = (wi, pw, ph);
+            if !self.thumbs.contains_key(&key) {
+                if self.thumbs.len() > 24 {
+                    self.thumbs.clear();
+                }
+                // centre crop of the world map to the window's shape
+                let src = &self.maps[wi].image;
+                let sw = src.w.min(src.h * pw / ph.max(1));
+                let sh = sw * ph / pw.max(1);
+                let mut crop = Canvas::new(sw, sh);
+                let (ox, oy) = ((src.w - sw) / 2, (src.h - sh) / 2);
+                for yy in 0..sh {
+                    let a = ((yy + oy) * src.w + ox) as usize;
+                    crop.px[(yy * sw) as usize..((yy + 1) * sw) as usize].copy_from_slice(&src.px[a..a + sw as usize]);
+                }
+                self.thumbs.insert(key, crate::assets::resample(&crop, pw, ph));
+            }
+            self.cv.round_rect(wx - 4, wy - 4, ww + 8, wh + 8, 12, 0xFFFF_FFFF, 255);
+            let img = &self.thumbs[&key];
+            self.cv.blit(img, wx, wy, 255);
+            if locked {
+                self.cv.rect_a(wx, wy, ww, wh, 0xFF20_2436, 170);
+            }
+            return;
+        }
+        let Some(kind) = tile_pieces(cat, i) else { return };
+        self.cv.round_rect(wx - 4, wy - 4, ww + 8, wh + 8, 12, 0xFFFF_FFFF, 255);
+        self.cv.round_grad(wx, wy, ww, wh, 9, 0xFF14_1C44, 0xFF0A_0F28, 255);
+        draw_pieces(&mut self.cv, &mut self.r.sprites, kind, wx, wy, ww, wh, if locked { 120 } else { 255 });
+    }
+
     fn names_for(&self, h: &MatchHeader, chars: &[usize; 6]) -> [String; 6] {
         let mut hn = 0;
         std::array::from_fn(|i| match h.seats[i].kind {
@@ -983,7 +1456,9 @@ impl App {
                     options.push(style_champ);
                     options.extend(fans);
                     options.extend(["kai", "sora", "emi", "ren", "taro", "nami", "hana", "yuki", "rin", "kaede"]);
-                    options.iter().map(|n| index(n)).find(|c| !used.contains(c)).unwrap_or(0)
+                    // outside the story, bots never play a boss you haven't beaten yet
+                    let locked = if story_foes.is_some() { Vec::new() } else { crate::cast::locked_bosses(&self.prog) };
+                    options.iter().filter(|n| !locked.contains(n)).map(|n| index(n)).find(|c| !used.contains(c)).unwrap_or(0)
                 }
             };
             used.push(pick);
@@ -1057,11 +1532,12 @@ impl App {
         };
         let w = &WORLDS[world];
         // header card
-        let head = format!("World {}  \u{00B7}  {}", world + 1, w.name);
-        let hw = Canvas::text_wb(&head, 3, Weight::Black).max(Canvas::text_w("Q / E  change world", 1)) + 56;
-        self.cv.glass(24, 18, hw, 74, 24, ui::GLASS, ui::GLASS_A);
-        self.cv.text_weight(50, 30, &head.replace("\u{00B7}", "-"), 3, 0xFFFF_FFFF, 255, Weight::Black);
-        self.cv.text_s(50, 68, &format!("Learn {}    Q / E  change world", w.style.to_lowercase()), 1, l.dim);
+        // header: the world's name in letter tiles on the story banner, its number under it
+        ui::banner(&mut self.cv, w.name, ui::section());
+        let sub = format!("World {}   \u{00B7}   Learn {}", world + 1, w.style.to_lowercase());
+        let sw = Canvas::text_wb(&sub, 2, Weight::Bold) + 36;
+        self.cv.round_rect(28, 86, sw, 34, 17, ui::GLASS, 200);
+        self.cv.text_weight(46, 91, &sub, 2, 0xFFFF_FFFF, 255, Weight::Bold);
         // node markers
         let t = self.t;
         for (k, &(x, y)) in pts.iter().enumerate() {
@@ -1102,12 +1578,15 @@ impl App {
         let rid = crate::content::node_rival(world, node);
         let rname = crate::cast::name_of(rid);
         if self.st.characters {
-            let expr = if n.level.boss { "angry" } else { "smug" };
-            crate::assets::draw_char(&mut self.cv, rid, expr, 1150, 690, 340, 255);
-            let tag = format!("Rival: {}", rname);
-            let tw = Canvas::text_wb(&tag, 1, Weight::Bold) + 24;
-            self.cv.glass(1150 - tw / 2, 664, tw, 24, 12, ui::GLASS, 210);
-            self.cv.text_weight(1150 - tw / 2 + 12, 669, &tag, 1, 0xFFFF_FFFF, 255, Weight::Bold);
+            // the rival in their signature pose, with a name plate in the section color
+            let bob = if self.st.reduce_motion { 0 } else { ((self.t * 2.0).sin() * 2.0) as i32 };
+            crate::assets::draw_char_ex(&mut self.cv, rid, "p-rival", 1140, 676 + bob, 400, 255, true);
+            let tag = format!("Rival  {}", if crate::assets::is_hidden(rid) { "???".to_string() } else { rname });
+            let tw = Canvas::text_wb(&tag, 2, Weight::Display) + 40;
+            let c = ui::section();
+            let (tx, ty) = (1140 - tw / 2, 650);
+            ui::slab(&mut self.cv, tx, ty, tw, 36, 10, c, 0xFFFF_FFFF, 3);
+            ui::outlined(&mut self.cv, tx + 22, ty + 5, &tag, 2, 0xFFFF_FFFF, darken(c, 130), 2, Weight::Display);
         }
         let kw = Canvas::text_w(&kind, 2);
         self.cv.text_s(1040 - kw, 554, &kind, 2, l.accent);
@@ -1118,17 +1597,34 @@ impl App {
         self.cv.text_s(70, 650, &format!("You: {}", human_style), 2, l.text);
         self.cv.text_s(470, 650, &format!("Difficulty: {}", DIFF_NAMES[diff]), 2, l.accent);
         self.cv.text_s(740, 650, &format!("\u{2605}  {}", n.extra.text(diff)), 2, l.dim);
-        let hint = if open { "Enter  play      \u{2190} \u{2192}  node      \u{2191} \u{2193}  difficulty      Esc  back" } else { "Locked: clear the previous node first" };
+        let hint = if open { "Enter  play      \u{2190} \u{2192}  node and world      \u{2191} \u{2193}  difficulty      Esc  back" } else { "Locked: clear the previous node first" };
         self.cv.text_s(70, 676, hint, 1, if open { l.dim } else { l.warn });
-        if nav.left && node > 0 {
-            node -= 1;
-            talk = true;
-            self.sfx(Sfx::Menu);
+        // left / right walk the nodes, and past either end into the next or previous world
+        if nav.left {
+            if node > 0 {
+                node -= 1;
+                talk = true;
+                self.sfx(Sfx::Menu);
+            } else if world > 0 {
+                world -= 1;
+                node = 5;
+                talk = true;
+                self.sfx(Sfx::Menu);
+            }
         }
-        if nav.right && node < 5 {
-            node += 1;
-            talk = true;
-            self.sfx(Sfx::Menu);
+        if nav.right {
+            if node < 5 {
+                node += 1;
+                talk = true;
+                self.sfx(Sfx::Menu);
+            } else if world < 4 && unlocked_world(&self.prog, world + 1) {
+                world += 1;
+                node = 0;
+                talk = true;
+                self.sfx(Sfx::Menu);
+            } else if world < 4 {
+                self.say("Finish this world's last node first");
+            }
         }
         if nav.up && diff > 0 {
             diff -= 1;
@@ -1227,224 +1723,400 @@ impl App {
 
     // -------------------------------------------------------------- versus room
     fn versus(&mut self, nav: &Nav, mut room: Box<Room>) -> Screen {
+        use crate::font::Weight;
         self.bg(0.1);
         let l = look(self.st.theme);
-        ui::title(&mut self.cv, "VERSUS", "Up to six seats on one machine. Each seat picks its own style.", &l);
-        #[derive(Clone, Copy)]
-        enum R {
-            Start,
-            Mode,
-            Target,
-            Teams,
-            Seat(usize),
-            Prof(usize),
-            Bot(usize),
-            Str(usize),
-            Team(usize),
-            Shared,
-            Cross,
-            Virus,
-            QLevel,
-            CColors,
-            KLevel,
-            KSpeed,
-            Nes,
-            PLevel,
-            PColors,
-            Seed,
-        }
-        let mut rows = vec![Row::act("START MATCH")];
-        let mut ids = vec![R::Start];
-        let push = |r: Row, id: R, rows: &mut Vec<Row>, ids: &mut Vec<R>| {
-            rows.push(r);
-            ids.push(id);
+        ui::title(&mut self.cv, if room.race { "Capsule Race" } else { "Versus" }, "", &l);
+        // while the "More rules" dialog is open the lobby gets no input; the dialog gets it all
+        // (and not on the frame that opens it, or the same Enter would flip its first rule)
+        let real = if room.more { *nav } else { Nav::default() };
+        let lobby = if room.more { Nav::default() } else { *nav };
+        let nav = &lobby;
+        // ---- geometry: one-press setups along the top, then "More rules"
+        let current = quick_current(&room);
+        let mut px = 40;
+        let pill_rects: Vec<(i32, i32, i32, i32)> = QUICK
+            .iter()
+            .map(|q| q.0)
+            .chain(std::iter::once("More rules"))
+            .map(|k| {
+                let w = Canvas::text_wb(k, 2, Weight::Bold) + 84;
+                let r = (px, 92, w, 46);
+                px += w + 12;
+                r
+            })
+            .collect();
+        let n_pills = pill_rects.len();
+        let (cy, ch, cw, gap) = (160, 400, 188, 14);
+        let card = |i: usize| (40 + i as i32 * (cw + gap), cy, cw, ch);
+        let start_r = (460, 588, 360, 62);
+        // moving up or down between rows lands on whatever sits nearest above or below
+        let nearest = |rects: &[(i32, i32, i32, i32)], x: i32| -> usize {
+            let mut best = (i32::MAX, 0);
+            for (i, r) in rects.iter().enumerate() {
+                let d = (r.0 + r.2 / 2 - x).abs();
+                if d < best.0 {
+                    best = (d, i);
+                }
+            }
+            best.1
         };
-        push(Row::opt("Mode", if room.race { "Capsule Race" } else { "Versus (KO)" }), R::Mode, &mut rows, &mut ids);
-        push(Row::opt("Targeting", room.target.name()), R::Target, &mut rows, &mut ids);
-        push(Row::opt("Team preset", "FFA / 2v2 / 3v3 / 2v2v2"), R::Teams, &mut rows, &mut ids);
-        for i in 0..6 {
-            let (c, p, per, s, team) = room.seats[i];
-            push(Row::head(format!("SEAT {}", i + 1)), R::Start, &mut rows, &mut ids);
-            push(Row::opt(format!("  Seat {}", i + 1), seat_choice_name(c)), R::Seat(i), &mut rows, &mut ids);
-            if c != SeatChoice::Closed {
-                if !room.race {
-                    push(Row::opt("  Style", profile_name(p)), R::Prof(i), &mut rows, &mut ids);
-                }
-                if c == SeatChoice::Bot {
-                    push(Row::opt("  Bot personality", per.name()), R::Bot(i), &mut rows, &mut ids);
-                    push(Row::opt("  Bot strength", format!("{} / 8", s)), R::Str(i), &mut rows, &mut ids);
-                }
-                push(Row::opt("  Team", if team == 0 { "none".to_string() } else { format!("{}", team) }), R::Team(i), &mut rows, &mut ids);
-            }
-        }
-        push(Row::head("RULES"), R::Start, &mut rows, &mut ids);
-        let o = room.opts;
-        let yn = |b: bool| if b { "ON" } else { "OFF" };
-        push(Row::opt("Same deal for everyone", yn(o.shared_deal)), R::Shared, &mut rows, &mut ids);
-        push(Row::opt("Force cross path", yn(o.force_cross)), R::Cross, &mut rows, &mut ids);
-        push(Row::opt("Virus clear also wins", yn(o.virus_clear_wins)), R::Virus, &mut rows, &mut ids);
-        push(Row::opt("Quad start level", format!("{}", o.quad_level)), R::QLevel, &mut rows, &mut ids);
-        push(Row::opt("Chain colors", format!("{}", o.chain_colors)), R::CColors, &mut rows, &mut ids);
-        push(Row::opt("Capsule level", format!("{}", o.capsule_level)), R::KLevel, &mut rows, &mut ids);
-        push(Row::opt("Capsule speed", purtris_sim::capsule::SPEED_NAMES[o.capsule_speed as usize]), R::KSpeed, &mut rows, &mut ids);
-        push(Row::opt("Capsule NES-style seeds", yn(o.nes_seeds)), R::Nes, &mut rows, &mut ids);
-        push(Row::opt("Panel level", format!("{}", o.panel_level)), R::PLevel, &mut rows, &mut ids);
-        push(Row::opt("Panel colors", format!("{}", o.panel_colors)), R::PColors, &mut rows, &mut ids);
-        push(Row::opt("Match seed", room.seed.map(|s| format!("{:08X}", s)).unwrap_or_else(|| "random".into())), R::Seed, &mut rows, &mut ids);
-        let g = ListGeom { x: 60, y: 120, w: 640, row_h: 30, visible: 18, scale: 2 };
-        let ev = list(&mut self.cv, &l, nav, &rows, &mut room.list, &g, self.t);
-        // side info
-        ui::panel(&mut self.cv, 760, 120, 460, 540, &l);
-        self.cv.text_s(780, 140, "ATTACK PATH", 2, l.accent);
-        self.cv.text_wrap(780, 170, 420, &room.path_text(), 2, l.text);
-        let h = room.header(1);
-        let cross = h.opts.force_cross || {
-            let act: Vec<Profile> = h.seats.iter().filter(|s| s.kind != SeatKind::Closed).map(|s| s.profile).collect();
-            act.iter().any(|&p| Some(p) != act.first().copied())
-        };
-        let mut y = 240;
-        self.cv.text_s(780, y, "PROVISIONAL NUMBERS IN THIS ROOM", 1, l.warn);
-        y += 16;
-        let styles: Vec<Style> = h.seats.iter().filter(|s| s.kind != SeatKind::Closed).map(|s| s.profile.style()).collect();
-        for (k, txt) in PROVISIONAL {
-            let rel = (k.starts_with("quad") && styles.contains(&Style::Quad))
-                || (k.starts_with("chain") && styles.contains(&Style::Chain) && (cross || !k.ends_with("cross")))
-                || (k.starts_with("capsule") && styles.contains(&Style::Capsule))
-                || (k.starts_with("panel") && styles.contains(&Style::Panel))
-                || (k.starts_with("cross") && cross && styles.contains(&Style::Panel));
-            if rel && y < 600 {
-                y += 4 + self.cv.text_wrap(780, y, 420, &format!("- {}", txt), 1, l.dim);
-            }
-        }
-        self.cv.text_wrap(780, 610, 420, "Keyboard left = WASD side, right = arrows side, so two or three people can share one keyboard. Gamepads: 4 max.", 1, l.dim);
-        ui::footer(&mut self.cv, "\u{2190}\u{2192} change   Enter: start / change   Esc: back", &l);
-        match ev {
-            LE::Moved => self.sfx(Sfx::Menu),
-            LE::Back => return Screen::Main(ListState::default()),
-            LE::Act(k) => {
-                if let R::Start = ids[k] {
-                    let seed = room.seed.unwrap_or_else(crate::now_seed);
-                    let h = room.header(seed);
-                    let humans = h.seats.iter().filter(|s| s.kind == SeatKind::Human).count();
-                    let active = h.seats.iter().filter(|s| s.kind != SeatKind::Closed).count();
-                    if active < 1 {
-                        self.say("OPEN AT LEAST ONE SEAT");
-                    } else if humans == 0 {
-                        self.say("ADD A HUMAN SEAT (OR WATCH: SET ONE TO BOT AND START FROM TRAINING)");
-                    } else {
-                        let mut devs = [None; 6];
-                        for i in 0..6 {
-                            if let SeatChoice::Human(d) = room.seats[i].0 {
-                                devs[i] = Some(d);
-                            }
-                        }
-                        let r2 = room.clone();
-                        self.sfx(Sfx::Select);
-                        let back = Screen::Versus(r2.clone());
-                        return self.select_for(h, devs, Origin::Versus(r2), back);
-                    }
-                }
-            }
-            LE::Chg(k, d) => {
+        let cards: Vec<(i32, i32, i32, i32)> = (0..6).map(card).collect();
+        // ---- input
+        let mut act: Option<(u8, usize)> = None;
+        let mut chg: Option<(usize, usize, i32)> = None;
+        let hit = |r: (i32, i32, i32, i32), m: (i32, i32)| m.0 >= r.0 && m.0 < r.0 + r.2 && m.1 >= r.1 && m.1 < r.1 + r.3;
+        if let Some(f) = room.edit {
+            let i = room.focus.1;
+            let fields = seat_fields(&room, i);
+            let mut fi = fields.iter().position(|&x| x == f).unwrap_or(0);
+            if nav.up && fi > 0 {
+                fi -= 1;
                 self.sfx(Sfx::Menu);
-                let o = &mut room.opts;
-                match ids[k] {
-                    R::Mode => room.race = !room.race,
-                    R::Target => room.target = cycle(&TargetRule::ALL, room.target, d),
-                    R::Teams => {
-                        let act: Vec<usize> = (0..6).filter(|&i| room.seats[i].0 != SeatChoice::Closed).collect();
-                        if act.is_empty() {
-                            self.say("Open a seat first");
-                            return Screen::Versus(room);
-                        }
-                        let cur = room.seats[act[0]].4;
-                        let mode = if cur == 0 { 1 } else if act.len() >= 6 && room.seats[act[2]].4 == 1 { 2 } else if act.len() >= 6 && room.seats[act[2]].4 == 2 { 3 } else { 0 };
-                        let next = (mode + 1) % 4;
-                        for (n, &i) in act.iter().enumerate() {
-                            room.seats[i].4 = match next {
-                                0 => 0,
-                                1 => 1 + (n as u8 % 2),
-                                2 => 1 + (n as u8 / 3),
-                                _ => 1 + (n as u8 / 2),
-                            };
+            }
+            if nav.down && fi + 1 < fields.len() {
+                fi += 1;
+                self.sfx(Sfx::Menu);
+            }
+            room.edit = Some(fields[fi]);
+            if nav.left {
+                chg = Some((i, fields[fi], -1));
+            }
+            if nav.right {
+                chg = Some((i, fields[fi], 1));
+            }
+            if let Some(m) = nav.mouse {
+                if nav.click {
+                    let (x, y, w, _) = card(i);
+                    for (k, &fld) in fields.iter().enumerate() {
+                        if hit((x, y + 92 + k as i32 * 50, w, 46), m) {
+                            room.edit = Some(fld);
+                            chg = Some((i, fld, 1));
                         }
                     }
-                    R::Seat(i) => room.seats[i].0 = cycle(&SEAT_DEVICES, room.seats[i].0, d),
-                    R::Prof(i) => room.seats[i].1 = cycle(&PLAY_PROFILES, room.seats[i].1, d),
-                    R::Bot(i) => room.seats[i].2 = cycle(&Personality::ALL, room.seats[i].2, d),
-                    R::Str(i) => room.seats[i].3 = ((room.seats[i].3 as i32 - 1 + d).rem_euclid(8) + 1) as u8,
-                    R::Team(i) => room.seats[i].4 = ((room.seats[i].4 as i32 + d).rem_euclid(4)) as u8,
-                    R::Shared => o.shared_deal = !o.shared_deal,
-                    R::Cross => o.force_cross = !o.force_cross,
-                    R::Virus => o.virus_clear_wins = !o.virus_clear_wins,
-                    R::QLevel => o.quad_level = ((o.quad_level as i32 - 1 + d).rem_euclid(15) + 1) as u32,
-                    R::CColors => o.chain_colors = ((o.chain_colors as i32 - 3 + d).rem_euclid(3) + 3) as u8,
-                    R::KLevel => o.capsule_level = ((o.capsule_level as i32 + d).rem_euclid(21)) as u32,
-                    R::KSpeed => o.capsule_speed = ((o.capsule_speed as i32 + d).rem_euclid(3)) as u8,
-                    R::Nes => o.nes_seeds = !o.nes_seeds,
-                    R::PLevel => o.panel_level = ((o.panel_level as i32 - 1 + d).rem_euclid(10) + 1) as u32,
-                    R::PColors => o.panel_colors = ((o.panel_colors as i32 - 4 + d).rem_euclid(3) + 4) as u8,
-                    R::Seed => room.seed = if room.seed.is_some() { None } else { Some(crate::now_seed() & 0xFFFF_FFFF) },
-                    R::Start => {}
+                    if !hit(card(i), m) {
+                        room.edit = None;
+                    }
                 }
             }
-            _ => {}
+            if nav.ok || nav.back {
+                room.edit = None;
+                self.sfx(Sfx::Back);
+            }
+        } else {
+            let (z, k) = room.focus;
+            let before = room.focus;
+            match z {
+                0 => {
+                    if nav.left && k > 0 {
+                        room.focus.1 -= 1;
+                    }
+                    if nav.right && k + 1 < n_pills {
+                        room.focus.1 += 1;
+                    }
+                    if nav.down {
+                        let r = pill_rects[k.min(n_pills - 1)];
+                        room.focus = (1, nearest(&cards, r.0 + r.2 / 2));
+                    }
+                }
+                1 => {
+                    if nav.left && k > 0 {
+                        room.focus.1 -= 1;
+                    }
+                    if nav.right && k < 5 {
+                        room.focus.1 += 1;
+                    }
+                    if nav.up {
+                        let r = cards[k.min(5)];
+                        room.focus = (0, nearest(&pill_rects, r.0 + r.2 / 2));
+                    }
+                    if nav.down {
+                        room.focus = (2, 0);
+                    }
+                }
+                _ => {
+                    if nav.up {
+                        room.focus = (1, nearest(&cards, start_r.0 + start_r.2 / 2));
+                    }
+                    // left / right from Start go to the seats on either side of it
+                    if nav.left {
+                        room.focus = (1, nearest(&cards, start_r.0 - 40));
+                    }
+                    if nav.right {
+                        room.focus = (1, nearest(&cards, start_r.0 + start_r.2 + 40));
+                    }
+                }
+            }
+            // the pointer takes the focus only while it moves (or clicks), never by resting
+            if let Some(m) = nav.mouse.filter(|_| nav.moved || nav.click) {
+                for (i, r) in pill_rects.iter().enumerate() {
+                    if hit(*r, m) {
+                        room.focus = (0, i);
+                        if nav.click {
+                            act = Some((0, i));
+                        }
+                    }
+                }
+                for i in 0..6 {
+                    if hit(card(i), m) {
+                        room.focus = (1, i);
+                        if nav.click {
+                            act = Some((1, i));
+                        }
+                    }
+                }
+                if hit(start_r, m) {
+                    room.focus = (2, 0);
+                    if nav.click {
+                        act = Some((2, 0));
+                    }
+                }
+            }
+            if room.focus != before {
+                self.sfx(Sfx::Menu);
+            }
+            if nav.ok {
+                act = Some(room.focus);
+            }
+            if nav.back {
+                self.sfx(Sfx::Back);
+                return Screen::Main(ListState::default());
+            }
+        }
+        if let Some((i, f, d)) = chg {
+            self.sfx(Sfx::Menu);
+            seat_change(&mut room, i, f, d);
+        }
+        match act {
+            Some((0, k)) if k < QUICK.len() => {
+                // one press sets up the whole room; the cursor jumps to Start
+                self.sfx(Sfx::Select);
+                let pads = self.input.pad_names().len();
+                let p1 = self.default_dev();
+                apply_quick(&mut room, k, p1, pads);
+                room.focus = (2, 0);
+                self.say(format!("{}: press Enter to start", QUICK[k].0));
+            }
+            Some((0, _)) => {
+                self.sfx(Sfx::Select);
+                room.more = true;
+                room.list = ListState::default();
+            }
+            Some((1, i)) => {
+                self.sfx(Sfx::Select);
+                if room.seats[i].0 == SeatChoice::Closed {
+                    room.seats[i].0 = SeatChoice::Bot;
+                }
+                room.edit = Some(0);
+            }
+            Some(_) => {
+                let seed = room.seed.unwrap_or_else(crate::now_seed);
+                let h = room.header(seed);
+                let humans = h.seats.iter().filter(|s| s.kind == SeatKind::Human).count();
+                let active = h.seats.iter().filter(|s| s.kind != SeatKind::Closed).count();
+                if active < 2 {
+                    self.say("Open at least two seats");
+                } else if humans == 0 {
+                    self.say("Add a player: set a seat to a keyboard or gamepad");
+                } else {
+                    let mut devs = [None; 6];
+                    for i in 0..6 {
+                        if let SeatChoice::Human(d) = room.seats[i].0 {
+                            devs[i] = Some(d);
+                        }
+                    }
+                    let mut r2 = room.clone();
+                    r2.edit = None;
+                    self.sfx(Sfx::Select);
+                    let back = Screen::Versus(r2.clone());
+                    return self.select_for(h, devs, Origin::Versus(r2), back);
+                }
+            }
+            None => {}
+        }
+        // ---- draw: quick setups (the one that matches the room wears a check) and More rules
+        let c = ui::section();
+        for (i, r) in pill_rects.iter().enumerate() {
+            let on = room.focus == (0, i) && room.edit.is_none();
+            let (x, y, w, h) = *r;
+            let (icon, label) = if i < QUICK.len() { (QUICK[i].1, QUICK[i].0) } else { ("gear-six", "More rules") };
+            if on {
+                ui::highlight(&mut self.cv, x, y, w, h, self.t);
+            } else if current == Some(i) {
+                self.cv.round_rect(x - 2, y - 2, w + 4, h + 4, (h + 4) / 2, lighten(c, 60), 255);
+                self.cv.round_rect(x, y, w, h, h / 2, 0xFF12_1838, 235);
+            } else {
+                self.cv.round_rect(x, y, w, h, h / 2, 0xFF12_1838, 200);
+            }
+            let ic = if on { 0xFFFF_FFFF } else { lighten(c, 90) };
+            crate::assets::icon(&mut self.cv, icon, x + 30, y + h / 2, 26, ic, 255);
+            self.cv.text_weight(x + 52, y + 11, label, 2, if on || current == Some(i) { 0xFFFF_FFFF } else { l.text }, 255, Weight::Bold);
+            if current == Some(i) {
+                let (bx, by) = (x + w - 14, y + 4);
+                self.cv.circle(bx as f32, by as f32, 11.0, 0xFFFF_FFFF, 255);
+                self.cv.circle(bx as f32, by as f32, 8.5, 0xFF2F_C46E, 255);
+                let (fx, fy) = (bx as f32, by as f32);
+                self.cv.poly(&[(fx - 5.0, fy - 0.5), (fx - 2.0, fy + 2.5), (fx - 2.0, fy + 5.5), (fx - 6.5, fy + 1.0)], 0xFFFF_FFFF, 255);
+                self.cv.poly(&[(fx - 2.0, fy + 2.5), (fx + 4.5, fy - 4.0), (fx + 6.0, fy - 2.5), (fx - 2.0, fy + 5.5)], 0xFFFF_FFFF, 255);
+            }
+        }
+        // ---- seat cards
+        for i in 0..6 {
+            let (x, y0, w, h) = card(i);
+            let on = room.focus == (1, i);
+            let y = y0 - if on { 6 } else { 0 };
+            let (choice, prof, per, strength, team) = room.seats[i];
+            let col = match choice {
+                SeatChoice::Human(_) => crate::story_ui::SEAT_COLORS[i],
+                SeatChoice::Bot => 0xFF5B_6894,
+                SeatChoice::Closed => 0xFF2C_3356,
+            };
+            tile_base(&mut self.cv, x, y, w, h, col, on);
+            let ink = darken(col, 130);
+            if choice == SeatChoice::Closed {
+                self.cv.circle((x + w / 2 + 6) as f32, (y + h / 2 - 20) as f32, 34.0, 0xFFFF_FFFF, if on { 230 } else { 90 });
+                let pc = if on { col } else { 0xFF2C_3356 };
+                self.cv.rect(x + w / 2 + 6 - 16, y + h / 2 - 23, 32, 6, pc);
+                self.cv.rect(x + w / 2 + 6 - 3, y + h / 2 - 36, 6, 32, pc);
+                let msg = "Add a seat";
+                let tw = Canvas::text_wb(msg, 2, Weight::Bold);
+                self.cv.text_weight(x + (w - tw) / 2 + 6, y + h / 2 + 30, msg, 2, 0xFFFF_FFFF, if on { 255 } else { 140 }, Weight::Bold);
+                continue;
+            }
+            let (tag, who) = match choice {
+                SeatChoice::Human(d) => (format!("P{}", i + 1), device_short(d)),
+                _ => ("CPU".to_string(), ui::title_case(per.name())),
+            };
+            ui::outlined(&mut self.cv, x + 22, y + 12, &tag, 4, 0xFFFF_FFFF, ink, 3, Weight::Display);
+            ui::fit_text(&mut self.cv, x + 20, y + 58, w - 40, &who, 0xFFFF_FFFF, 235, Weight::Bold);
+            if team != 0 {
+                let tc = [0xFFE8_3A4A, 0xFF2F_7BEA, 0xFF2C_B65A][(team as usize - 1) % 3];
+                let (bx, by) = (x + w - 26, y + 34);
+                self.cv.circle(bx as f32, by as f32, 19.0, 0xFFFF_FFFF, 255);
+                self.cv.circle(bx as f32, by as f32, 15.0, tc, 255);
+                let tn = format!("{}", team);
+                let tw = Canvas::text_wb(&tn, 2, Weight::Display);
+                self.cv.text_weight(bx - tw / 2, by - 13, &tn, 2, 0xFFFF_FFFF, 255, Weight::Display);
+            }
+            let profile = if room.race { Profile::CapsuleVs } else { prof };
+            if room.edit.is_some() && on {
+                // the seat's settings, edited in place
+                for (k, &f) in seat_fields(&room, i).iter().enumerate() {
+                    let ry = y + 92 + k as i32 * 50;
+                    let sel = room.edit == Some(f);
+                    if sel {
+                        ui::highlight(&mut self.cv, x + 10, ry, w - 8, 46, self.t);
+                    } else {
+                        self.cv.round_rect(x + 10, ry, w - 8, 46, 23, 0xFF12_1838, 150);
+                    }
+                    let (lbl, val) = seat_field_text(&room, i, f);
+                    self.cv.text_weight(x + 26, ry + 3, lbl, 1, 0xFFFF_FFFF, 200, Weight::Bold);
+                    let v = if sel { format!("\u{2190} {} \u{2192}", val) } else { val };
+                    ui::fit_text(&mut self.cv, x + 26, ry + 16, w - 44, &v, 0xFFFF_FFFF, 255, Weight::Bold);
+                }
+                continue;
+            }
+            // the style: a window of its pieces, its name, its rules
+            let st = profile.style();
+            let kind = match st {
+                Style::Quad => 0,
+                Style::Chain => 1,
+                Style::Capsule => 2,
+                Style::Panel => 3,
+            };
+            let (wx, wy, ww, wh) = (x + 18, y + 94, w - 24, 132);
+            self.cv.round_rect(wx - 4, wy - 4, ww + 8, wh + 8, 12, 0xFFFF_FFFF, 255);
+            self.cv.round_grad(wx, wy, ww, wh, 9, 0xFF14_1C44, 0xFF0A_0F28, 255);
+            draw_pieces(&mut self.cv, &mut self.r.sprites, kind, wx, wy, ww, wh, 255);
+            let sname = ui::title_case(st.name());
+            ui::outlined(&mut self.cv, x + 22, y + 244, &sname, 3, 0xFFFF_FFFF, ink, 3, Weight::Display);
+            ui::fit_text(&mut self.cv, x + 22, y + 284, w - 36, profile_rules(profile), 0xFFFF_FFFF, 220, Weight::Bold);
+            if choice == SeatChoice::Bot {
+                ui::fit_text(&mut self.cv, x + 22, y + 316, w - 36, "Strength", 0xFFFF_FFFF, 220, Weight::Bold);
+                for k in 0..8 {
+                    let filled = k < strength as i32;
+                    let (sx, sy) = (x + 28 + k * 19, y + 352);
+                    self.cv.star(sx as f32 + 1.0, sy as f32 + 2.0, 9.0, ink, 200);
+                    self.cv.star(sx as f32, sy as f32, 9.0, if filled { 0xFFFF_E066 } else { 0xFF3A_4268 }, 255);
+                }
+            } else {
+                ui::fit_text(&mut self.cv, x + 22, y + 316, w - 36, "Ready to play", 0xFFFF_FFFF, 220, Weight::Bold);
+            }
+        }
+        // ---- how attacks travel in this room, beside the start button
+        self.cv.text_wrap(40, 590, 400, &room.path_text(), 2, l.text);
+        // ---- start
+        let on = room.focus == (2, 0);
+        let (sx, sy, sw, sh) = start_r;
+        let sy = sy - if on { 4 } else { 0 };
+        self.cv.soft_shadow(sx, sy, sw, sh, sh / 2, 10, 110);
+        self.cv.round_rect(sx - 4, sy - 4, sw + 8, sh + 8, sh / 2 + 4, 0xFFFF_FFFF, if on { 255 } else { 160 });
+        self.cv.round_grad(sx, sy, sw, sh, sh / 2, lighten(c, 40), darken(c, 20), 255);
+        self.cv.round_rect(sx + 24, sy + 5, sw - 48, sh * 2 / 5, sh / 5, 0xFFFF_FFFF, 46);
+        let msg = "Start match";
+        let tw = Canvas::text_wb(msg, 4, Weight::Display);
+        ui::outlined(&mut self.cv, sx + (sw - tw) / 2, sy + 9, msg, 4, 0xFFFF_FFFF, darken(c, 130), 3, Weight::Display);
+        if room.edit.is_some() {
+            ui::prompts(&mut self.cv, &l, &[("\u{2191}\u{2193}", "Setting"), ("\u{2190}\u{2192}", "Change"), ("Enter", "Done")]);
+        } else {
+            ui::prompts(&mut self.cv, &l, &[("Enter", if room.focus.0 == 1 { "Edit" } else { "Select" }), ("Esc", "Back")]);
+        }
+        // ---- the full rules, in a dialog over the lobby
+        if room.more {
+            self.cv.rect_a(0, 0, 1280, 720, 0xFF00_0000, 120);
+            let body = ui::modal(&mut self.cv, 330, 60, 620, 636, "More rules");
+            let o = room.opts;
+            let yn = |b: bool| if b { "On" } else { "Off" };
+            let rows = vec![
+                Row::opt("Mode", if room.race { "Capsule race" } else { "Versus" }),
+                Row::opt("Who attacks go to", room.target.name()),
+                Row::opt("Teams", team_preset_name(&room)),
+                Row::opt("Same deal for everyone", yn(o.shared_deal)),
+                Row::opt("Always convert attacks", yn(o.force_cross)),
+                Row::opt("Clearing every germ also wins", yn(o.virus_clear_wins)),
+                Row::opt("Quad start level", format!("{}", o.quad_level)),
+                Row::opt("Chain colors", format!("{}", o.chain_colors)),
+                Row::opt("Capsule level", format!("{}", o.capsule_level)),
+                Row::opt("Capsule speed", purtris_sim::capsule::SPEED_NAMES[o.capsule_speed as usize]),
+                Row::opt("Capsule original-style deals", yn(o.nes_seeds)),
+                Row::opt("Panel level", format!("{}", o.panel_level)),
+                Row::opt("Panel colors", format!("{}", o.panel_colors)),
+                Row::opt("Match seed", room.seed.map(|s| format!("{:08X}", s)).unwrap_or_else(|| "Random".into())),
+                Row::act("Done"),
+            ];
+            let g = ListGeom { x: 370, y: body + 18, w: 540, row_h: 34, visible: 15, scale: 2 };
+            let ev = list(&mut self.cv, &l, &real, &rows, &mut room.list, &g, self.t);
+            let o = &mut room.opts;
+            match ev {
+                LE::Moved => self.sfx(Sfx::Menu),
+                LE::Back | LE::Act(14) => {
+                    self.sfx(Sfx::Back);
+                    room.more = false;
+                }
+                LE::Chg(k, d) => {
+                    self.sfx(Sfx::Menu);
+                    match k {
+                        0 => room.race = !room.race,
+                        1 => room.target = cycle(&TargetRule::ALL, room.target, d),
+                        2 => next_team_preset(&mut room),
+                        3 => o.shared_deal = !o.shared_deal,
+                        4 => o.force_cross = !o.force_cross,
+                        5 => o.virus_clear_wins = !o.virus_clear_wins,
+                        6 => o.quad_level = ((o.quad_level as i32 - 1 + d).rem_euclid(15) + 1) as u32,
+                        7 => o.chain_colors = ((o.chain_colors as i32 - 3 + d).rem_euclid(3) + 3) as u8,
+                        8 => o.capsule_level = ((o.capsule_level as i32 + d).rem_euclid(21)) as u32,
+                        9 => o.capsule_speed = ((o.capsule_speed as i32 + d).rem_euclid(3)) as u8,
+                        10 => o.nes_seeds = !o.nes_seeds,
+                        11 => o.panel_level = ((o.panel_level as i32 - 1 + d).rem_euclid(10) + 1) as u32,
+                        12 => o.panel_colors = ((o.panel_colors as i32 - 4 + d).rem_euclid(3) + 4) as u8,
+                        13 => room.seed = if room.seed.is_some() { None } else { Some(crate::now_seed() & 0xFFFF_FFFF) },
+                        _ => {}
+                    }
+                }
+                _ => {}
+            }
         }
         Screen::Versus(room)
-    }
-
-    // -------------------------------------------------------------- solo
-    fn solo(&mut self, nav: &Nav, mut s: ListState) -> Screen {
-        self.bg(0.1);
-        let l = look(self.st.theme);
-        ui::title(&mut self.cv, "SOLO", "Objective modes. Records are kept on this machine.", &l);
-        let modes: [(Mode, Profile, &str); 9] = [
-            (Mode::QuadSprint, Profile::QuadGuideline, "QUAD SPRINT: clear 40 lines"),
-            (Mode::QuadTwenty, Profile::QuadGuideline, "QUAD TWENTY: clear 20 lines"),
-            (Mode::QuadMarathon, Profile::QuadGuideline, "QUAD MARATHON: until you top out"),
-            (Mode::ChainEndless, Profile::ChainTsu, "CHAIN ENDLESS"),
-            (Mode::CapsuleLevelRun, Profile::CapsuleNes, "CAPSULE LEVEL RUN"),
-            (Mode::PanelEndless, Profile::PanelPdp, "PANEL ENDLESS RISE"),
-            (Mode::PanelPuzzle(0), Profile::PanelPdp, "PANEL PUZZLES"),
-            (Mode::Versus, Profile::QuadPpt, "ARCADE LADDER (VS BOTS)"),
-            (Mode::Training, Profile::QuadPpt, "BACK"),
-        ];
-        let mut rows: Vec<Row> = Vec::new();
-        for (m, p, name) in modes.iter() {
-            let rec = self.prog.records.get(&format!("{:?}", m)).copied();
-            let v = match (m, rec) {
-                (Mode::QuadSprint | Mode::QuadTwenty, Some(t)) => format!("best {}", fmt_time(t as u32)),
-                (_, Some(x)) if !matches!(m, Mode::PanelPuzzle(_) | Mode::Versus | Mode::Training) => format!("best {}", x),
-                _ => String::new(),
-            };
-            let _ = p;
-            rows.push(Row { label: name.to_string(), value: v, kind: ui::RK::Act });
-        }
-        let g = ListGeom { x: 90, y: 150, w: 700, row_h: 44, visible: 10, scale: 2 };
-        let ev = list(&mut self.cv, &l, nav, &rows, &mut s, &g, self.t);
-        self.host(1060.0, 560.0, 62.0);
-        match ev {
-            LE::Moved => self.sfx(Sfx::Menu),
-            LE::Back => return Screen::Main(ListState::default()),
-            LE::Act(i) => {
-                if i == 8 {
-                    return Screen::Main(ListState::default());
-                }
-                if i == 7 {
-                    return Screen::Arcade(ListState::default(), 0);
-                }
-                if let Mode::PanelPuzzle(_) = modes[i].0 {
-                    return Screen::Sandbox(ListState::default(), 99, 0, 0);
-                }
-                let (m, p, _) = modes[i];
-                let h = quick_header(crate::now_seed(), m, &[(SeatKind::Human, p, Personality::Builder, 1)]);
-                let mut dev = [None; 6];
-                dev[0] = Some(self.default_dev());
-                return self.start(h, dev, Origin::Solo(m, p), false);
-            }
-            _ => {}
-        }
-        Screen::Solo(s)
     }
 
     fn arcade(&mut self, nav: &Nav, mut s: ListState, _k: usize) -> Screen {
@@ -1454,9 +2126,10 @@ impl App {
         let rows: Vec<Row> = Style::ALL.iter().map(|st| Row::act(format!("PLAY AS {}", st.name()))).chain(std::iter::once(Row::act("BACK"))).collect();
         let g = ListGeom { x: 90, y: 160, w: 600, row_h: 50, visible: 6, scale: 3 };
         let ev = list(&mut self.cv, &l, nav, &rows, &mut s, &g, self.t);
+        ui::prompts(&mut self.cv, &l, &[("\u{2191}\u{2193}", "Choose"), ("Enter", "Start"), ("Esc", "Back")]);
         match ev {
-            LE::Back => return Screen::Solo(ListState::default()),
-            LE::Act(4) => return Screen::Solo(ListState::default()),
+            LE::Back => return Screen::Solo,
+            LE::Act(4) => return Screen::Solo,
             LE::Act(i) => return self.arcade_stage(style_profile_for(i), 0),
             _ => {}
         }
@@ -1475,62 +2148,26 @@ impl App {
         self.start(h, dev, Origin::Arcade { profile, stage }, false)
     }
 
-    // -------------------------------------------------------------- training
-    fn training(&mut self, nav: &Nav, mut s: ListState) -> Screen {
-        self.bg(0.05);
-        let l = look(self.st.theme);
-        ui::title(&mut self.cv, "TRAINING", "The curriculum leads. The sandbox and tools sit beside it.", &l);
-        let rows = vec![
-            Row::act("CURRICULUM"),
-            Row::act("SANDBOX (REWIND, SAVE STATES, GARBAGE)"),
-            Row::act("PANEL PUZZLES"),
-            Row::act("CALCULATORS"),
-            Row::act("SEED BROWSER"),
-            Row::act("BACK"),
-        ];
-        let g = ListGeom { x: 90, y: 160, w: 700, row_h: 50, visible: 6, scale: 3 };
-        let ev = list(&mut self.cv, &l, nav, &rows, &mut s, &g, self.t);
-        // the one habit line
-        let done = self.prog.lessons.len();
-        ui::panel(&mut self.cv, 840, 160, 380, 200, &l);
-        self.cv.text_s(860, 180, "PROGRESS", 2, l.accent);
-        self.cv.text_s(860, 210, &format!("{} / {} lessons passed", done, LESSONS.len()), 2, l.text);
-        let next = LESSONS.iter().find(|x| !self.prog.lessons.contains_key(x.id));
-        if let Some(n) = next {
-            self.cv.text_wrap(860, 250, 340, &format!("Recommended next: {} ({})", n.title, n.track), 2, l.dim);
-        }
-        self.cv.text_wrap(860, 320, 340, "Lessons never gate anything.", 1, l.dim);
-        match ev {
-            LE::Moved => self.sfx(Sfx::Menu),
-            LE::Back | LE::Act(5) => return Screen::Main(ListState::default()),
-            LE::Act(0) => return Screen::Curriculum(ListState::default(), 0),
-            LE::Act(1) => return Screen::Sandbox(ListState::default(), 0, 0, 4),
-            LE::Act(2) => return Screen::Sandbox(ListState::default(), 99, 0, 0),
-            LE::Act(3) => return Screen::Calc(ListState::default(), 3, 4, 70, 0),
-            LE::Act(4) => return Screen::Seeds(ListState::default(), 0x1234_5678, String::new()),
-            _ => {}
-        }
-        Screen::Training(s)
-    }
-
     fn curriculum(&mut self, nav: &Nav, mut s: ListState, mut track: usize) -> Screen {
         self.bg(0.05);
         let l = look(self.st.theme);
-        ui::title(&mut self.cv, "CURRICULUM", "Q/E or LB/RB: change track", &l);
-        // track tabs
-        for (i, t) in TRACKS.iter().enumerate() {
-            let x = 90 + i as i32 * 190;
-            let on = i == track;
-            self.cv.round_rect(x, 112, 180, 34, 17, if on { l.accent } else { 0xFF0A_1124 }, if on { 235 } else { 170 });
-            self.cv.text_center(x + 90, 120, &ui::title_case(t), 2, if on { hex(0x101020) } else { l.text });
+        ui::title(&mut self.cv, "CURRICULUM", "", &l);
+        // track tabs: left / right (or Q / E, LB / RB, a click) change track
+        let names: Vec<String> = TRACKS.iter().map(|t| ui::title_case(t)).collect();
+        let names: Vec<&str> = names.iter().map(|s| s.as_str()).collect();
+        let before = track;
+        if let Some(t) = ui::tabs(&mut self.cv, &l, &names, track, 104, nav.mouse, nav.click) {
+            track = t;
         }
-        if self.input.key_pressed(Key::E) || (0..4).any(|i| self.input.pad_pressed(i, crate::input::pad::RB)) {
+        if nav.right || self.input.key_pressed(Key::E) || (0..4).any(|i| self.input.pad_pressed(i, crate::input::pad::RB)) {
             track = (track + 1) % TRACKS.len();
-            s = ListState::default();
         }
-        if self.input.key_pressed(Key::Q) || (0..4).any(|i| self.input.pad_pressed(i, crate::input::pad::LB)) {
+        if nav.left || self.input.key_pressed(Key::Q) || (0..4).any(|i| self.input.pad_pressed(i, crate::input::pad::LB)) {
             track = (track + TRACKS.len() - 1) % TRACKS.len();
+        }
+        if track != before {
             s = ListState::default();
+            self.sfx(Sfx::Menu);
         }
         let idxs: Vec<usize> = (0..LESSONS.len()).filter(|&i| LESSONS[i].track == TRACKS[track]).collect();
         let mut rows = Vec::new();
@@ -1547,22 +2184,15 @@ impl App {
             rows.push(Row { label: le.title.to_uppercase(), value: if passed { "\u{2605} PASSED".into() } else { String::new() }, kind: ui::RK::Act });
             map.push(i);
         }
-        if let Some((mx, my)) = nav.mouse {
-            if nav.click && my > 118 && my < 148 {
-                let k = ((mx - 90) / 190) as usize;
-                if k < TRACKS.len() {
-                    track = k;
-                }
-            }
-        }
-        let g = ListGeom { x: 90, y: 170, w: 760, row_h: 40, visible: 12, scale: 2 };
+        let g = ListGeom { x: 90, y: 180, w: 760, row_h: 40, visible: 11, scale: 2 };
         let ev = list(&mut self.cv, &l, nav, &rows, &mut s, &g, self.t);
+        ui::prompts(&mut self.cv, &l, &[("\u{2190}\u{2192}", "Track"), ("\u{2191}\u{2193}", "Lesson"), ("Enter", "Open"), ("Esc", "Back")]);
         if track == 1 {
             self.cv.text_wrap(900, 180, 330, "The Quad NES track (hypertap and rolling on the console repeat) waits on the quad.nes profile and its timing file. The tap lesson ships on Capsule, whose repeat lives in the sim.", 1, l.dim);
         }
         match ev {
             LE::Moved => self.sfx(Sfx::Menu),
-            LE::Back => return Screen::Training(ListState::default()),
+            LE::Back => return Screen::Training,
             LE::Act(k) if map[k] != usize::MAX => return Screen::Lesson(map[k], ListState::default(), 0),
             _ => {}
         }
@@ -1663,8 +2293,8 @@ impl App {
             let ev = list(&mut self.cv, &l, nav, &rows, &mut s, &g, self.t);
             let n = purtris_sim::panel::PUZZLES.len();
             match ev {
-                LE::Back => return Screen::Training(ListState::default()),
-                LE::Act(i) if i == n => return Screen::Training(ListState::default()),
+                LE::Back => return Screen::Training,
+                LE::Act(i) if i == n => return Screen::Training,
                 LE::Act(i) => {
                     let h = quick_header(1, Mode::PanelPuzzle(i as u8), &[(SeatKind::Human, Profile::PanelPdp, Personality::Builder, 1)]);
                     let mut dev = [None; 6];
@@ -1693,7 +2323,7 @@ impl App {
         }
         let (mut style, mut opp, mut strength) = (style, opp, strength);
         match ev {
-            LE::Back | LE::Act(4) => return Screen::Training(ListState::default()),
+            LE::Back | LE::Act(4) => return Screen::Training,
             LE::Chg(0, d) => style = ((style as i32 + d).rem_euclid(4)) as usize,
             LE::Chg(1, d) => opp = ((opp as i32 + d).rem_euclid(5)) as usize,
             LE::Chg(2, d) => strength = ((strength as i32 - 1 + d).rem_euclid(8) + 1) as u8,
@@ -1728,6 +2358,7 @@ impl App {
         ];
         let g = ListGeom { x: 60, y: 140, w: 520, row_h: 40, visible: 5, scale: 2 };
         let ev = list(&mut self.cv, &l, nav, &rows, &mut s, &g, self.t);
+        ui::prompts(&mut self.cv, &l, &[("\u{2191}\u{2193}", "Choose"), ("\u{2190}\u{2192}", "Change"), ("Esc", "Back")]);
         // chain result
         let mut total = 0u32;
         let mut left = leftover;
@@ -1786,7 +2417,7 @@ impl App {
         t(&mut self.cv, &mut y, "Shared cross travel delay: 30 ticks (0.5 s).", l.text);
         let (mut links, mut size, mut target, mut leftover) = (links, size, target, leftover);
         match ev {
-            LE::Back | LE::Act(4) => return Screen::Training(ListState::default()),
+            LE::Back | LE::Act(4) => return Screen::Training,
             LE::Chg(0, d) => links = ((links as i32 - 1 + d).rem_euclid(19) + 1) as u32,
             LE::Chg(1, d) => size = ((size as i32 - 4 + d).rem_euclid(8) + 4) as u32,
             LE::Chg(2, d) => target = ((target as i32 - 1 + d * 5).rem_euclid(120) + 1) as u32,
@@ -1818,6 +2449,7 @@ impl App {
         let g = ListGeom { x: 60, y: 130, w: 480, row_h: 40, visible: 3, scale: 2 };
         let nav2 = Nav { back: nav.back && !self.input.key_pressed(Key::Backspace), ..*nav };
         let ev = list(&mut self.cv, &l, &nav2, &rows, &mut s, &g, self.t);
+        ui::prompts(&mut self.cv, &l, &[("\u{2191}\u{2193}", "Choose"), ("\u{2190}\u{2192}", "Change"), ("0-9 A-F", "Type a seed"), ("Esc", "Back")]);
         if !text.is_empty() {
             self.cv.text_s(560, 140, &format!("typing: {}_", text), 2, l.accent);
         }
@@ -1832,8 +2464,9 @@ impl App {
             ],
         );
         if let Ok(m) = Match::new(h) {
-            ui::panel(&mut self.cv, 40, 268, 600, 420, &l);
-            ui::panel(&mut self.cv, 680, 268, 560, 420, &l);
+            // both cards end above the prompt band
+            ui::panel(&mut self.cv, 40, 268, 600, 380, &l);
+            ui::panel(&mut self.cv, 680, 268, 560, 380, &l);
             let mut y = 284;
             if let Some(Board::Quad(q)) = &m.seats[0].board {
                 let s: String = q.queue.iter().take(28).map(|&t| purtris_sim::quad::PIECE_NAMES[t as usize]).collect();
@@ -1856,7 +2489,7 @@ impl App {
                     for xx in 0..purtris_sim::capsule::W {
                         let i = (yy * purtris_sim::capsule::W + xx) as usize;
                         if c.kind[i] != 0 {
-                            self.cv.circle(70.0 + xx as f32 * 12.0, (y + 20 + yy * 12) as f32, 5.0, crate::theme::capsule_color(c.color[i]), 255);
+                            self.cv.circle(70.0 + xx as f32 * 10.0, (y + 22 + yy * 9) as f32, 4.0, crate::theme::capsule_color(c.color[i]), 255);
                         }
                     }
                 }
@@ -1874,7 +2507,7 @@ impl App {
             }
         }
         match ev {
-            LE::Back | LE::Act(2) => return Screen::Training(ListState::default()),
+            LE::Back | LE::Act(2) => return Screen::Training,
             LE::Act(1) => seed = crate::now_seed() & 0xFFFF_FFFF,
             LE::Chg(0, d) => seed = (seed as i64 + d as i64).rem_euclid(1 << 32) as u64,
             _ => {}
@@ -1891,6 +2524,7 @@ impl App {
         rows.push(Row::act("BACK"));
         let g = ListGeom { x: 60, y: 140, w: 760, row_h: 34, visible: 15, scale: 2 };
         let ev = list(&mut self.cv, &l, nav, &rows, &mut s, &g, self.t);
+        ui::prompts(&mut self.cv, &l, &[("\u{2191}\u{2193}", "Choose"), ("Enter", "Watch"), ("Esc", "Back")]);
         ui::panel(&mut self.cv, 860, 140, 360, 220, &l);
         self.cv.text_wrap(880, 160, 320, "ENTER: watch. While watching: T takes over seat 1 from this tick (the fork is a new replay), 1/2/4 sets speed, P pauses, O steps.", 2, l.text);
         match ev {
@@ -2056,12 +2690,12 @@ impl App {
             let pop = if self.st.reduce_motion { 0 } else { ((1.0 - (phase * 4.0).min(1.0)) * 3.0) as i32 };
             let sc = 9 + pop;
             let a = if go { ((1.0 - phase) * 255.0) as u32 } else { 255 };
-            let w = Canvas::text_wb(&txt, sc, Weight::Black);
+            let w = Canvas::text_wb(&txt, sc, Weight::Display);
             let (x, y) = (640 - w / 2, 300 - (Canvas::px(sc) * 0.4) as i32);
-            for (dx, dy) in [(-5, 0), (5, 0), (0, -5), (0, 5), (-4, -4), (4, 4), (-4, 4), (4, -4), (0, 8)] {
-                self.cv.text_weight(x + dx, y + dy, &txt, sc, 0xFF14_1030, a * 9 / 10, Weight::Black);
+            for (dx, dy) in [(-5, 0), (5, 0), (0, -5), (0, 5), (-4, -4), (4, 4), (-4, 4), (4, -4), (0, 8), (2, 9)] {
+                self.cv.text_weight(x + dx, y + dy, &txt, sc, 0xFF14_1030, a * 9 / 10, Weight::Display);
             }
-            self.cv.text_weight(x, y, &txt, sc, if go { l.good } else { l.accent }, a, Weight::Black);
+            self.cv.text_weight(x, y, &txt, sc, if go { l.good } else { l.accent }, a, Weight::Display);
         }
         if let Some((t, _)) = &g.toast {
             self.cv.text_center(640, 40, t, 2, l.accent);
@@ -2070,14 +2704,13 @@ impl App {
             self.cv.rect_a(0, 0, 1280, 720, 0xFF00_0000, 140);
             let rows = vec![Row::act("RESUME"), Row::act("RESTART"), Row::act(format!("Theme: {}", self.st.theme.name())), Row::act("QUIT TO MENU")];
             let mut ls = ListState { sel: g.pause_sel, scroll: 0 };
-            ui::panel(&mut self.cv, 440, 220, 400, 280, &l);
-            self.cv.text_center(640, 236, "PAUSED", 3, l.accent);
-            let gg = ListGeom { x: 470, y: 290, w: 340, row_h: 46, visible: 4, scale: 2 };
+            let body = ui::modal(&mut self.cv, 430, 196, 420, if g.training { 330 } else { 306 }, "Paused");
+            let gg = ListGeom { x: 470, y: body + 22, w: 340, row_h: 50, visible: 4, scale: 2 };
             let nav2 = Nav { back: false, ..*nav };
             let ev = list(&mut self.cv, &l, &nav2, &rows, &mut ls, &gg, self.t);
             g.pause_sel = ls.sel;
             if g.training {
-                self.cv.text_center(640, 470, "O: STEP ONE TICK   BACKSPACE: REWIND", 1, l.dim);
+                self.cv.text_center(640, 496, "O: step one tick    Backspace: rewind", 1, l.dim);
             }
             let resume = !just_paused && (nav.back || (self.input.pause_pressed() && !nav.ok));
             match ev {
@@ -2121,7 +2754,7 @@ impl App {
         match o {
             Origin::Versus(r) => Screen::Versus(r.clone()),
             Origin::Solo(Mode::PanelPuzzle(_), _) => Screen::Sandbox(ListState::default(), 99, 0, 0),
-            Origin::Solo(..) => Screen::Solo(ListState::default()),
+            Origin::Solo(..) => Screen::Solo,
             Origin::Story { world, node, diff, chosen } => {
                 let ci = Style::ALL.iter().position(|s| *s == chosen.style()).unwrap_or(0);
                 Screen::Story { world: *world, node: *node, diff: *diff, chosen: ci, talk: false }
@@ -2327,11 +2960,19 @@ impl App {
             _ => "MATCH OVER".into(),
         };
         let head = ui::title_case(&head);
-        let hw = Canvas::text_wb(&head, 6, crate::font::Weight::Black);
-        self.cv.text_weight(640 - hw / 2 + 3, 32 + 3, &head, 6, 0xFF00_0000, 110, crate::font::Weight::Black);
-        self.cv.text_weight(640 - hw / 2, 32, &head, 6, if won { l.accent } else { l.text }, 255, crate::font::Weight::Black);
+        // the result on a big slanted banner: the section color for a win, slate otherwise
+        let bc = if won || matches!(g.m.outcome, Outcome::Winner(_)) && !g.m.header.mode.is_solo() { ui::section() } else { 0xFF5A_6386 };
+        let right = ui::banner_at(&mut self.cv, &head, bc, 14, 5);
+        if won {
+            for k in 0..3 {
+                let sx = right + 26 + k * 46;
+                self.cv.star(sx as f32 + 2.0, 50.0, 19.0, darken(bc, 130), 255);
+                self.cv.star(sx as f32, 47.0, 19.0, 0xFFFF_E066, 255);
+            }
+        }
         if let Some(rec) = &r.new_record {
-            self.cv.text_center(640, 100, &ui::nice(rec), 2, l.good);
+            self.cv.text_a(41, 101, &ui::nice(rec), 2, 0xFF00_0000, 150);
+            self.cv.text_s(40, 100, &ui::nice(rec), 2, l.good);
         }
         // seat table in fixed columns
         ui::panel(&mut self.cv, 40, 130, 700, 300, &l);
@@ -2399,23 +3040,23 @@ impl App {
         ui::panel(&mut self.cv, 770, 130, 470, 540, &l);
         let mut y = 146;
         if r.objectives.is_empty() && r.findings.is_empty() {
-            self.cv.text_s(790, y, "MATCH NOTES", 2, l.accent);
-            y += 30;
+            ui::heading(&mut self.cv, 790, y, 430, "About this match");
+            y += 40;
             let notes = [
-                format!("Attack path: {}", if g.m.cross { "cross (gauge)" } else { "authentic (native units)" }),
+                (if g.m.cross { "Attacks were converted between styles" } else { "Attacks arrived just as each style sends them" }).to_string(),
                 format!("Mode: {}", g.m.header.mode.name()),
-                format!("Targeting: {}", g.m.header.target.name()),
-                format!("Seed: {:08X}", g.m.header.seed as u32),
+                format!("Who attacks go to: {}", g.m.header.target.name()),
+                format!("Seed: {:08X} (share it to replay the same deal)", g.m.header.seed as u32),
                 format!("Length: {}", fmt_time(g.m.tick)),
-                "Save the replay to study it in Training, or take it over from any tick.".to_string(),
+                "Save the replay to study it in Training, or take it over from any moment.".to_string(),
             ];
             for n in notes.iter() {
                 y += self.cv.text_wrap(790, y, 430, n, 2, l.text) + 8;
             }
         }
         if !r.objectives.is_empty() {
-            self.cv.text_s(790, y, "OBJECTIVES", 2, l.accent);
-            y += 26;
+            ui::heading(&mut self.cv, 790, y, 430, "Goals");
+            y += 38;
             for (t, ok) in &r.objectives {
                 self.cv.text_s(790, y, &format!("{} {}", if *ok { "\u{2605}" } else { "\u{25CB}" }, t), 2, if *ok { l.good } else { l.dim });
                 y += 24;
@@ -2423,8 +3064,8 @@ impl App {
             y += 12;
         }
         if !r.findings.is_empty() {
-            self.cv.text_s(790, y, "WHAT TO WORK ON", 2, l.accent);
-            y += 26;
+            ui::heading(&mut self.cv, 790, y, 430, "What to work on");
+            y += 38;
             for f in r.findings.iter().take(3) {
                 self.cv.text_s(790, y, f.severity, 1, if f.severity == "EXCHANGE" { l.warn } else { l.dim });
                 y += 14;
@@ -2514,7 +3155,7 @@ impl App {
     fn controls(&mut self, nav: &Nav, mut s: ListState, mut layout: usize, waiting: Option<usize>) -> Screen {
         self.bg(0.0);
         let l = look(self.st.theme);
-        ui::title(&mut self.cv, "CONTROLS", "Q/E: change keyboard layout. Enter: rebind. Delete: reset layout.", &l);
+        ui::title(&mut self.cv, "CONTROLS", "", &l);
         let names = ["KEYBOARD (ONE PLAYER)", "KEYBOARD LEFT (WASD SIDE)", "KEYBOARD RIGHT (ARROWS SIDE)"];
         self.cv.text_s(90, 120, &format!("\u{2190} {} \u{2192}", names[layout]), 2, l.accent);
         if let Some(a) = waiting {
@@ -2545,6 +3186,7 @@ impl App {
         rows.push(Row::act("BACK"));
         let g = ListGeom { x: 90, y: 160, w: 760, row_h: 36, visible: 12, scale: 2 };
         let ev = list(&mut self.cv, &l, nav, &rows, &mut s, &g, self.t);
+        ui::prompts(&mut self.cv, &l, &[("\u{2190}\u{2192}", "Layout"), ("\u{2191}\u{2193}", "Choose"), ("Enter", "Rebind"), ("Del", "Reset"), ("Esc", "Back")]);
         ui::panel(&mut self.cv, 890, 160, 350, 440, &l);
         let pad = [
             "Gamepad (auto-detected):",
@@ -2565,11 +3207,13 @@ impl App {
                 self.cv.text_s(1030, 182 + k as i32 * 40, b.trim(), 2, l.text);
             }
         }
-        if self.input.key_pressed(Key::E) {
+        if nav.right || self.input.key_pressed(Key::E) {
             layout = (layout + 1) % 3;
+            self.sfx(Sfx::Menu);
         }
-        if self.input.key_pressed(Key::Q) {
+        if nav.left || self.input.key_pressed(Key::Q) {
             layout = (layout + 2) % 3;
+            self.sfx(Sfx::Menu);
         }
         if self.input.key_pressed(Key::Delete) {
             self.st.bindings[layout] = crate::input::default_bindings()[layout].clone();
@@ -2624,6 +3268,7 @@ impl App {
         let g = ListGeom { x: 90, y: 160, w: 560, row_h: 44, visible: 6, scale: 2 };
         let nav2 = if editing.is_some() { Nav::default() } else { *nav };
         let ev = list(&mut self.cv, &l, &nav2, &rows, &mut s, &g, self.t);
+        ui::prompts(&mut self.cv, &l, &[("\u{2191}\u{2193}", "Choose"), ("\u{2190}\u{2192}", "Change"), ("Enter", "Edit"), ("Esc", "Back")]);
         // the card
         let (cx, cy) = (760, 150);
         let accent = [crate::theme::CYAN, crate::theme::GREEN, crate::theme::PINK, crate::theme::YELLOW][self.card.favorite % 4];
@@ -2672,7 +3317,8 @@ impl App {
             ("KEYS", "Keyboard: Left/Right move, Up rotates, Down soft drops: the arrows alone are enough. Z/X rotate either way (Panel: swap), A rotates 180, C holds (Panel: raise), Space hard drops (Panel: raise), Tab/Q change target. Two or three people can share one keyboard with the LEFT (WASD + F G R H) and RIGHT (arrows + , . / L) layouts. Gamepads work in any seat. Esc or Start pauses. The flat Tournament theme is in Settings."),
         ];
         let (h, body) = pages[page];
-        ui::title(&mut self.cv, &format!("HOW TO PLAY: {}", h), &format!("page {} / {}   \u{2190}\u{2192} turn   Esc back", page + 1, pages.len()), &l);
+        ui::title(&mut self.cv, &format!("HOW TO PLAY: {}", h), &format!("Page {} of {}", page + 1, pages.len()), &l);
+        ui::prompts(&mut self.cv, &l, &[("\u{2190}\u{2192}", "Turn the page"), ("Esc", "Back")]);
         ui::panel(&mut self.cv, 60, 130, 1160, 520, &l);
         self.cv.text_wrap(90, 160, 1100, body, 3, l.text);
         if nav.right || nav.ok {

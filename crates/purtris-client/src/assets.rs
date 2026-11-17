@@ -357,6 +357,30 @@ fn with_cast<R>(key: &'static str, ph: i32, flip: bool, f: impl FnOnce(&Canvas) 
     })
 }
 
+thread_local! {
+    /// cast ids drawn as silhouettes this frame (bosses of unbeaten worlds; the App sets it)
+    static HIDDEN: std::cell::RefCell<Vec<&'static str>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// Who is drawn as a silhouette from now on (empty: everyone shows).
+pub fn set_hidden(ids: Vec<&'static str>) {
+    HIDDEN.with(|h| *h.borrow_mut() = ids);
+}
+
+/// Is this cast member a silhouette right now?
+pub fn is_hidden(id: &str) -> bool {
+    HIDDEN.with(|h| h.borrow().iter().any(|x| *x == id))
+}
+
+/// A silhouette: the figure's shape in deep ink with a faint cool rim, nothing else.
+fn silhouette(cv: &mut Canvas, img: &Canvas, x: i32, y: i32, alpha: u32) {
+    let r = (img.h / 160).max(1);
+    for (dx, dy) in [(-r, 0), (r, 0), (0, -r), (0, r)] {
+        cv.blit_tint_px(img, x + dx, y + dy, 0xFF7C_8CC8, alpha * 70 / 255);
+    }
+    cv.blit_tint_px(img, x, y, 0xFF10_1428, alpha);
+}
+
 /// Draw a cast member standing with feet at (cx, bottom), the image `h` layout units tall.
 pub fn draw_char(cv: &mut Canvas, name: &str, expr: &str, cx: i32, bottom: i32, h: i32, alpha: u32) {
     draw_char_ex(cv, name, expr, cx, bottom, h, alpha, false);
@@ -370,10 +394,15 @@ pub fn draw_char_ex(cv: &mut Canvas, name: &str, expr: &str, cx: i32, bottom: i3
     let ph = cv.us(h);
     let (cxp, bp) = (cv.u(cx), cv.u(bottom));
     let k = cv.k;
+    let hidden = is_hidden(name);
     with_cast(key, ph, flip, |img| {
         // soft contact shadow under the feet, then the character
         cv.ellipse(cx as f32, bottom as f32 - 4.0, img.w as f32 / k * 0.26, (h as f32 * 0.022).max(3.0), 0xFF00_0000, alpha / 3);
-        cv.blit_px(img, cxp - img.w / 2, bp - img.h, alpha);
+        if hidden {
+            silhouette(cv, img, cxp - img.w / 2, bp - img.h, alpha);
+        } else {
+            cv.blit_px(img, cxp - img.w / 2, bp - img.h, alpha);
+        }
     });
 }
 
@@ -383,7 +412,14 @@ pub fn draw_portrait(cv: &mut Canvas, name: &str, expr: &str, x: i32, y: i32, si
     let Some(key) = cast_key(name, expr, true) else { return };
     let ph = cv.us(size);
     let (xp, yp) = (cv.u(x), cv.u(y));
-    with_cast(key, ph, flip, |img| cv.blit_px(img, xp + (ph - img.w) / 2, yp, alpha));
+    let hidden = is_hidden(name);
+    with_cast(key, ph, flip, |img| {
+        if hidden {
+            silhouette(cv, img, xp + (ph - img.w) / 2, yp, alpha);
+        } else {
+            cv.blit_px(img, xp + (ph - img.w) / 2, yp, alpha);
+        }
+    });
 }
 
 /// The rival who waits in each story world.
