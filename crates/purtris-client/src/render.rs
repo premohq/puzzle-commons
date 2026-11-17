@@ -642,7 +642,6 @@ impl Renderer {
     #[allow(clippy::too_many_arguments)]
     fn draw_capsule(&mut self, cv: &mut Canvas, c: &cap::CapsuleState, g: &Geom, faces: bool, flat: bool, st: &Settings, t: f32) {
         let cell = g.cell;
-        let frame = ((t * 3.0) as i32 % 2) as u8;
         let flash_on = ((t * 12.0) as i32) % 2 == 0;
         for y in cap::VIS0..cap::H {
             for x in 0..cap::W {
@@ -660,7 +659,7 @@ impl Renderer {
                     cap::K_BOTTOM => CellKind::HalfB,
                     _ => CellKind::Single,
                 };
-                let spr = self.sprites.get(SpriteKey { kind, color: col, size: cell, face: faces, pattern: st.colorblind, flat, frame: if kind == CellKind::Virus { frame } else { 0 } });
+                let spr = self.sprites.get(SpriteKey { kind, color: col, size: cell, face: faces, pattern: st.colorblind, flat, frame: if kind == CellKind::Virus { virus_frame(t, i) } else { 0 } });
                 let px = g.fx + x * cell;
                 let py = g.fy + (y - cap::VIS0) * cell;
                 cv.blit(spr, px, py, 255);
@@ -876,4 +875,10 @@ fn draw_inputs(cv: &mut Canvas, x: i32, y: i32, bits: u16, ts: i32, l: &Look) {
 fn hud_label(cv: &mut Canvas, x: i32, y: i32, s: &str, ts: i32, c: u32) {
     cv.text_weight(x + 1, y + 1, s, ts, 0xFF00_0000, 150, Weight::Bold);
     cv.text_weight(x, y, s, ts, c, 255, Weight::Bold);
+}
+
+/// Germ animation frame (4-frame loop at ~6 fps), offset per cell so a board of germs doesn't bob in lockstep.
+fn virus_frame(t: f32, cell: usize) -> u8 {
+    let phase = (cell as u32).wrapping_mul(2_654_435_761) >> 30; // 0..3
+    (((t * 6.0) as u32 + phase) % 4) as u8
 }
