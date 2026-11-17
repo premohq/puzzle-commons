@@ -386,19 +386,27 @@ fn side_w(bw: i32) -> i32 {
 fn gutters(style: Style, bw: i32) -> (i32, i32) {
     let sw = side_w(bw);
     let f = frame_w(bw);
-    let _ = style_dims(style);
-    (f + 19 + if style == Style::Quad { sw + 2 } else { 0 }, f + 8 + sw + 2)
+    (f + if style == Style::Quad { sw + 2 } else { 4 }, f + 10 + sw + 4)
 }
 /// Space kept above and below the well, the nameplate height and its lift above the well.
 /// When any Quad board plays, every plate is lifted clear of Quad's two spawn rows so the
 /// plates line up across the match.
 fn vert(bw: i32, any_quad: bool) -> (i32, i32, i32, i32) {
-    let big = bw >= 200;
-    let plate_h = if big { 50 } else { 34 };
-    let pop = if big { 26 } else { 16 };
     let f = frame_w(bw);
-    let lift = if any_quad { (bw / 5 + 8).max(f + 10) } else { f + 10 };
-    (pop + plate_h + lift, f + 10 + if big { 30 } else { 20 } + 6, plate_h, lift)
+    let bar = bar_h(bw);
+    // above: the HOLD / NEXT words that sit on the frame's top edge (and Quad's spawn rows);
+    // below: the half of the score that hangs under the frame, the name bar, a line of info
+    let top = if any_quad { (bw / 5 + 4).max(f + label_px(bw) as i32 / 2 + 4) } else { f + label_px(bw) as i32 / 2 + 4 };
+    (top, f + score_px(bw) as i32 / 2 + 8 + bar + 18, bar, 0)
+}
+fn bar_h(bw: i32) -> i32 {
+    if bw >= 200 { 38 } else { 26 }
+}
+fn label_px(bw: i32) -> f32 {
+    if bw >= 200 { 21.0 } else { 14.0 }
+}
+fn score_px(bw: i32) -> f32 {
+    (bw as f32 * 0.15).clamp(14.0, 38.0)
 }
 fn block_w(style: Style, bw: i32) -> i32 {
     let (l, r) = gutters(style, bw);
@@ -530,14 +538,25 @@ const WELL_PAD: i32 = 34;
 
 /// Thickness of the coloured frame around a well, and the frame plus its ink outline.
 fn bezel_t(fw: i32) -> i32 {
-    (fw / 22).clamp(7, 14)
+    (fw / 19).clamp(8, 16)
+}
+
+/// Each seat's colour: its frame, its name bar and the light behind its board.
+pub fn seat_color(i: usize) -> u32 {
+    [0xFF2F_7BFF, 0xFFF0_3C8C, 0xFF22_B864, 0xFFFF_8A1F, 0xFF9B_5CFF, 0xFF16_B8CF][i % 6]
+}
+
+/// The garbage meter's groove in the frame's left bar: (x offset from the field, width).
+fn meter_slot(fw: i32) -> (i32, i32) {
+    let t = bezel_t(fw);
+    let w = ((t - 3) * 6 / 10).max(3);
+    (-t + (t - 3 - w) / 2, w)
 }
 fn frame_w(fw: i32) -> i32 {
     bezel_t(fw) + 3
 }
 /// The ink of the logo: every toy-like part of the match HUD is outlined in it.
 const INK: u32 = 0xFF24_1A3C;
-const CREAM: u32 = 0xFFFF_F6D6;
 
 /// Each style's colour.
 pub fn style_accent(s: Style) -> u32 {
@@ -549,103 +568,72 @@ pub fn style_accent(s: Style) -> u32 {
     }
 }
 
-/// The cabinet around a well: a glossy gunmetal bezel lit from above with a neon inlay in the
-/// style's colour and corner pieces, then deep glass inside with a faint pattern per style, a
-/// reflection, side shading and a glow at the floor. Painted in real pixels at scale `k`,
-/// offset by WELL_PAD.
+/// The cabinet around a well, in the seat's colour: ink outline, a chunky glossy frame with a
+/// light inner bevel and halftone dots toward the bottom, the garbage meter's groove in the
+/// left bar, then a dark well tinted toward the seat's colour with a faint grid and the
+/// player's character ghosted large behind the cells. Painted once in real pixels at scale
+/// `k`, offset by WELL_PAD.
 #[allow(clippy::too_many_arguments)]
-fn paint_well(k: f32, fw: i32, fh: i32, cell: i32, cols: i32, rows: i32, style: Style, accent: u32, r: i32) -> Canvas {
+fn paint_well(k: f32, fw: i32, fh: i32, cell: i32, cols: i32, rows: i32, style: Style, color: u32, r: i32, ghost: Option<&str>) -> Canvas {
     let p = WELL_PAD;
     let mut c = Canvas::new(((fw + 2 * p) as f32 * k).round() as i32, ((fh + 2 * p) as f32 * k).round() as i32);
     c.k = k;
     let t = bezel_t(fw);
     let (ox, oy, ow, oh, orr) = (p - t, p - t, fw + 2 * t, fh + 2 * t, r + t);
-    c.soft_shadow(ox - 3, oy + 6, ow + 6, oh + 6, orr + 3, 14, 210);
-    // ink outline, then a chunky frame in the style's colour lit from above
+    c.soft_shadow(ox - 3, oy + 7, ow + 6, oh + 6, orr + 3, 15, 210);
     c.round_rect(ox - 3, oy - 3, ow + 6, oh + 6, orr + 3, INK, 255);
-    c.round_grad(ox, oy, ow, oh, orr, lighten(accent, 60), darken(accent, 60), 255);
-    c.round_ring(ox, oy, ow, oh, orr, 2, lighten(accent, 170), darken(accent, 90), 255);
-    // the logo's gloss: a bar and a dot along the top edge, a shorter bar down the left side
+    c.round_grad(ox, oy, ow, oh, orr, lighten(color, 110), darken(color, 35), 255);
+    // halftone: dots that grow toward the bottom of the frame
+    let step = (t / 3).max(4);
+    let y_from = oy + oh * 55 / 100;
+    let mut y = y_from;
+    while y < oy + oh - 2 {
+        let f = (y - y_from) as f32 / (oy + oh - y_from) as f32;
+        let rad = step as f32 * (0.12 + 0.30 * f);
+        let shift = if ((y - y_from) / step) % 2 == 0 { 0 } else { step / 2 };
+        let mut x = ox + 3 + shift;
+        while x < ox + ow - 3 {
+            let inside = x > p - 4 && x < p + fw + 4 && y > p - 4 && y < p + fh + 4;
+            if !inside {
+                c.circle(x as f32, y as f32, rad, 0xFFFF_FFFF, 70);
+            }
+            x += step;
+        }
+        y += step;
+    }
+    // a light bevel just inside the outer edge, a darker one where the frame turns into the well
+    c.round_ring(ox + 2, oy + 2, ow - 4, oh - 4, orr - 2, 2, lighten(color, 200), lighten(color, 60), 220);
+    c.round_ring(p - 7, p - 7, fw + 14, fh + 14, r + 5, 3, darken(color, 70), lighten(color, 90), 200);
+    // the logo's gloss bar and dot along the top edge
     let gb = (t / 3).max(2);
     let run = ow - 2 * orr;
-    c.round_rect(ox + orr, oy + 3, run * 3 / 5, gb, gb / 2 + 1, 0xFFFF_FFFF, 190);
-    c.round_rect(ox + orr + run * 3 / 5 + gb * 2, oy + 3, gb * 2, gb, gb / 2 + 1, 0xFFFF_FFFF, 190);
-    c.round_rect(ox + 3, oy + orr, gb, (oh - 2 * orr) / 4, gb / 2 + 1, 0xFFFF_FFFF, 110);
-    // cream screws in the corners
-    // on the frame's centre line, half way round each corner's curve
-    let k = ((orr as f32 - t as f32 / 2.0) * std::f32::consts::FRAC_1_SQRT_2) as i32;
-    let (l, tp, rt, bm) = (ox + orr - k, oy + orr - k, ox + ow - orr + k, oy + oh - orr + k);
-    for (cx, cy) in [(l, tp), (rt, tp), (l, bm), (rt, bm)] {
-        let rs = t as f32 * 0.30;
-        c.circle(cx as f32, cy as f32, rs + 1.5, INK, 255);
-        c.circle(cx as f32, cy as f32, rs, CREAM, 255);
-        c.line(cx as f32 - rs * 0.55, cy as f32 + rs * 0.55, cx as f32 + rs * 0.55, cy as f32 - rs * 0.55, (rs * 0.35).max(1.0), darken(CREAM, 90), 255);
-    }
-    let _ = style;
-    // the inner lip and the well
+    c.round_rect(ox + orr, oy + 3, run * 3 / 5, gb, gb / 2 + 1, 0xFFFF_FFFF, 210);
+    c.round_rect(ox + orr + run * 3 / 5 + gb * 2, oy + 3, gb * 2, gb, gb / 2 + 1, 0xFFFF_FFFF, 210);
+    // the garbage meter's groove in the left bar
+    let (mx, mw) = meter_slot(fw);
+    c.round_rect(p + mx - 1, p - 1, mw + 2, fh + 2, (mw + 2) / 2, INK, 230);
+    // the well
     c.round_rect(p - 3, p - 3, fw + 6, fh + 6, r + 1, INK, 255);
-    c.round_grad(p, p, fw, fh, r - 2, 0xFF14_1A3E, 0xFF06_0814, 255);
+    c.round_grad(p, p, fw, fh, r - 2, mix(0xFF0C_1132, color, 46), mix(0xFF04_050E, color, 24), 255);
     c.set_clip(p, p, fw, fh);
-    match style {
-        Style::Quad => {
-            for x in (0..cols).step_by(2) {
-                c.rect_a(p + x * cell, p, cell, fh, 0xFFFF_FFFF, 5);
-            }
-            let tk = (cell / 9).max(2);
-            for x in 1..cols {
-                for y in 1..rows {
-                    let (px, py) = (p + x * cell, p + y * cell);
-                    c.rect_a(px - tk, py, tk * 2 + 1, 1, 0xFF8C_A6FF, 28);
-                    c.rect_a(px, py - tk, 1, tk * 2 + 1, 0xFF8C_A6FF, 28);
-                }
-            }
-        }
-        Style::Chain => {
-            // a soft honeycomb of dots, like light through bubble glass
-            for y in 0..rows {
-                for x in 0..cols {
-                    let off = if y % 2 == 0 { 0.0 } else { 0.5 };
-                    let (cx, cy) = (p as f32 + (x as f32 + 0.5 + off) * cell as f32, p as f32 + (y as f32 + 0.5) * cell as f32);
-                    c.circle(cx, cy, cell as f32 * 0.09, lighten(accent, 60), 16);
-                }
-            }
-        }
-        Style::Capsule => {
-            // a measuring bottle: graduation marks down both sides
-            for y in 1..rows * 2 {
-                let long = y % 4 == 0;
-                let len = if long { cell / 2 } else { cell / 4 };
-                let a = if long { 60 } else { 34 };
-                let yy = p + y * cell / 2;
-                c.rect_a(p + 3, yy, len, 1, 0xFFFF_D8EE, a);
-                c.rect_a(p + fw - 3 - len, yy, len, 1, 0xFFFF_D8EE, a);
-            }
-            for x in (0..cols).step_by(2) {
-                c.rect_a(p + x * cell, p, cell, fh, 0xFFFF_FFFF, 4);
-            }
-        }
-        Style::Panel => {
-            // a soft checkerboard stage
-            for y in 0..rows {
-                for x in 0..cols {
-                    if (x + y) % 2 == 0 {
-                        c.rect_a(p + x * cell, p + y * cell, cell, cell, 0xFFFF_FFFF, 6);
-                    }
-                }
-            }
-        }
+    if let Some(id) = ghost {
+        // the player's character, large and faint, low in the well
+        let size = fw * 13 / 10;
+        crate::assets::draw_portrait(&mut c, id, "smile", p + (fw - size) / 2, p + fh - size * 19 / 20, size, 40, false);
+        c.rect_a(p, p, fw, fh, mix(0xFF04_050E, color, 30), 70);
     }
-    // shade under the top edge and down the sides, a glow of the style's colour at the floor
+    let ga = if style == Style::Chain || style == Style::Capsule { 12 } else { 18 };
+    for x in 1..cols {
+        c.rect_a(p + x * cell, p, 1, fh, 0xFFFF_FFFF, ga);
+    }
+    for y in 1..rows {
+        c.rect_a(p, p + y * cell, fw, 1, 0xFFFF_FFFF, ga);
+    }
     for i in 0..6 {
-        c.rect_a(p, p + i * 3, fw, 3, 0xFF00_0000, (80 - i * 13) as u32);
-    }
-    let sv = (cell / 4).max(3);
-    for i in 0..3 {
-        c.rect_a(p + i * sv, p, sv, fh, 0xFF00_0000, (36 - i * 12) as u32);
-        c.rect_a(p + fw - (i + 1) * sv, p, sv, fh, 0xFF00_0000, (36 - i * 12) as u32);
+        c.rect_a(p, p + i * 3, fw, 3, 0xFF00_0000, (90 - i * 15) as u32);
     }
     for i in 0..10 {
-        c.rect_a(p, p + fh - (i + 1) * fh / 40, fw, fh / 40, accent, (30 - i * 3) as u32);
+        c.rect_a(p, p + fh - (i + 1) * fh / 40, fw, fh / 40, lighten(color, 40), (26 - i * 2) as u32);
     }
     c.reset_clip();
     // the inner ink rim goes on last: its rounded inside masks the shading in the corners
@@ -657,22 +645,16 @@ fn paint_well(k: f32, fw: i32, fh: i32, cell: i32, cols: i32, rows: i32, style: 
 /// of light and a shadow on the floor, and a dark station panel that holds the board, its side
 /// boxes, its nameplate and its stats together.
 pub fn paint_arena(cv: &mut Canvas, m: &Match, geoms: &[Geom; 6]) {
-    // focus the eye on the boards: darken the top and bottom edges of the screen
-    for i in 0..10 {
-        cv.rect_a(0, 40 + i * 8, W, 8, 0xFF02_0410, (60 - i * 6) as u32);
-        cv.rect_a(0, H - (i + 1) * 10, W, 10, 0xFF02_0410, (90 - i * 9) as u32);
-    }
     for (i, g) in geoms.iter().enumerate() {
         if g.cell == 0 || m.seats[i].board.is_none() {
             continue;
         }
-        let accent = style_accent(m.seats[i].cfg.profile.style());
+        let accent = seat_color(i);
         let (fw, fh) = (g.cols * g.cell, g.rows * g.cell);
-        let big = fw >= 200;
-        let pill_h = if big { 30 } else { 20 };
+        let pill_h = g.plate_h;
         let bt = bezel_t(fw);
         let top = g.fy - g.lift - g.plate_h - 12;
-        let bot = g.fy + fh + bt + 10 + pill_h + 12;
+        let bot = g.fy + fh + bt + score_px(fw) as i32 / 2 + 8 + pill_h + 6;
         let (x0, x1) = (g.x - 6, g.x + g.w + 6);
         let (cx, cy) = ((g.fx + fw / 2) as f32, (g.fy + fh / 2) as f32);
         // a backlight in the style's colour and a shadow on the floor
@@ -690,12 +672,14 @@ pub struct Renderer {
     pub scene: Scene,
     pub fx: Fx,
     pub geoms: [Geom; 6],
-    wells: std::collections::HashMap<(i32, i32, i32, u32, u32), Canvas>,
+    wells: std::collections::HashMap<(i32, i32, i32, u32, u32, u8, usize), Canvas>,
+    /// where each seat's side column has got to (the next free y)
+    side_y: [i32; 6],
 }
 
 impl Renderer {
     pub fn new() -> Self {
-        Renderer { sprites: Sprites::new(), scene: Scene::new(), fx: Fx::new(), geoms: [Geom::default(); 6], wells: std::collections::HashMap::new() }
+        Renderer { sprites: Sprites::new(), scene: Scene::new(), fx: Fx::new(), geoms: [Geom::default(); 6], wells: std::collections::HashMap::new(), side_y: [0; 6] }
     }
 
     /// Feed this tick's sim events into particles/callouts. Returns nothing; audio is separate.
@@ -821,40 +805,51 @@ impl Renderer {
         let flat = st.theme == ThemeId::Tournament || st.preset == Preset::Potato;
         let ts = (cell / 11).clamp(1, 3);
         let _s = crate::prof::scope("S:well");
-        // well
-        let accent = match style {
-            Style::Quad => CYAN,
-            Style::Chain => GREEN,
-            Style::Capsule => PINK,
-            Style::Panel => YELLOW,
-        };
+        let color = seat_color(i);
         let glassy = st.theme == ThemeId::Voyage && st.preset != Preset::Potato;
+        let deco = glassy.then_some(color);
         let danger = board.danger() && seat.alive;
         let pulse = ((v.t * 6.0).sin() * 0.5 + 0.5) as f32;
+        let fwid = frame_w(fw);
+        let r = (cell / 3).clamp(8, 16);
+        let member = &crate::cast::CAST[v.chars[i].min(crate::cast::CAST.len() - 1)];
         if glassy {
             // the cabinet never changes during a match, so it is painted once and reused
-            let r = (cell / 3).clamp(8, 16);
-            let key = (fw, fh, cell, accent, cv.k.to_bits());
+            let ghost = if st.characters { Some(v.chars[i]) } else { None };
+            let sk = match style {
+                Style::Quad => 0,
+                Style::Chain => 1,
+                Style::Capsule => 2,
+                Style::Panel => 3,
+            };
+            let key = (fw, fh, cell, color, cv.k.to_bits(), sk, ghost.unwrap_or(usize::MAX));
             if self.wells.len() > 24 {
                 self.wells.clear();
             }
-            let wc = self.wells.entry(key).or_insert_with(|| paint_well(cv.k, fw, fh, cell, g.cols, g.rows, style, accent, r));
+            if style == Style::Quad {
+                let (hx, hy, hw, hh, _) = hold_rect(&g);
+                hold_tab(cv, deco, hx, hy, hw, hh, &l);
+            }
+            let wc = self.wells.entry(key).or_insert_with(|| paint_well(cv.k, fw, fh, cell, g.cols, g.rows, style, color, r, ghost.map(|_| member.id)));
             cv.blit(wc, g.fx - WELL_PAD, g.fy - WELL_PAD, 255);
-            // the halo stays live: it breathes red when the stack is in danger
-            let edge = if danger { mix(accent, l.warn, (120.0 + 135.0 * pulse) as u32) } else { accent };
-            let bt = frame_w(g.cols * cell);
+            // live light on the frame: it heats up with combos and breathes red in danger
+            let edge = if danger { mix(color, l.warn, (120.0 + 135.0 * pulse) as u32) } else { lighten(color, 80) };
             let heat = self.fx.heat[i];
             let halo = if danger { (50.0 + 70.0 * pulse) as u32 } else { (heat * 150.0) as u32 };
             if halo > 4 {
-                cv.round_ring(g.fx - bt - 5, g.fy - bt - 5, fw + 2 * bt + 10, fh + 2 * bt + 10, r + bt + 5, 6, edge, edge, halo);
+                cv.round_ring(g.fx - fwid - 5, g.fy - fwid - 5, fw + 2 * fwid + 10, fh + 2 * fwid + 10, r + fwid + 5, 6, edge, edge, halo);
             }
             if danger {
-                cv.round_ring(g.fx - bt + 3, g.fy - bt + 3, fw + 2 * bt - 6, fh + 2 * bt - 6, r + bt - 3, 3, lighten(edge, 80), edge, (120.0 + 120.0 * pulse) as u32);
+                cv.round_ring(g.fx - fwid + 3, g.fy - fwid + 3, fw + 2 * fwid - 6, fh + 2 * fwid - 6, r + fwid - 3, 3, lighten(edge, 80), edge, (120.0 + 120.0 * pulse) as u32);
             }
             if self.fx.bright[i] > 0.02 && !st.reduce_motion {
                 cv.rect_a(g.fx, g.fy, fw, fh, 0xFFFF_FFFF, (self.fx.bright[i] * 50.0) as u32);
             }
         } else {
+            if style == Style::Quad {
+                let (hx, hy, hw, hh, _) = hold_rect(&g);
+                hold_tab(cv, None, hx, hy, hw, hh, &l);
+            }
             cv.frame(g.fx - 2, g.fy - 2, fw + 4, fh + 4, 2, if danger { l.warn } else if st.theme == ThemeId::Phosphor { l.dim } else { hex(0x555C6E) }, 255);
             cv.rect_a(g.fx, g.fy, fw, fh, l.well, l.well_alpha);
         }
@@ -862,7 +857,7 @@ impl Renderer {
             cv.rect_a(g.fx, g.fy, fw, fh, l.warn, (self.fx.flash[i] * 40.0) as u32);
         }
         let _s = crate::prof::scope("S:grid");
-        // grid: hairlines on the flat themes (glass wells carry theirs in the cached cabinet)
+        // grid: hairlines on the flat themes (the glossy wells carry theirs in the cached cabinet)
         if !glassy {
             let grid_a = if style == Style::Chain || style == Style::Capsule { 40 } else { 70 };
             for x in 1..g.cols {
@@ -872,6 +867,8 @@ impl Renderer {
                 cv.rect_a(g.fx, g.fy + y * cell, fw, 1, l.grid, grid_a);
             }
         }
+        // the side column starts level with the top of the frame
+        self.side_y[i] = g.fy - fwid - side_head(g.side, "NEXT");
         // pieces may poke above the well only in Quad (its spawn rows); Chain pairs slide in
         if style == Style::Quad {
             cv.set_clip(g.fx, g.fy - cell * 2, fw, fh + cell * 2);
@@ -881,9 +878,9 @@ impl Renderer {
         let _s = crate::prof::scope("S:pieces");
         match board {
             Board::Quad(q) => self.draw_quad(cv, i, q, &g, faces, flat, st, v.ghost_on),
-            Board::Chain(c) => self.draw_chain(cv, c, &g, faces, flat, st, v.t),
+            Board::Chain(c) => self.draw_chain(cv, i, c, &g, faces, flat, st, v.t),
             Board::Capsule(c) => self.draw_capsule(cv, i, c, &g, faces, flat, st, v.t),
-            Board::Panel(p) => self.draw_panel(cv, p, &g, faces, flat, st, v.t),
+            Board::Panel(p) => self.draw_panel(cv, i, p, &g, faces, flat, st, v.t),
         }
         cv.set_clip(g.fx, g.fy - if style == Style::Quad { cell * 2 } else { 0 }, fw, fh + if style == Style::Quad { cell * 2 } else { 0 });
         self.fx.draw_marks(cv, i, &g);
@@ -903,7 +900,7 @@ impl Renderer {
                 Style::Chain => {}
             }
         }
-        // garbage meter on the left edge of the field
+        // garbage meter: on the glossy theme it fills the groove in the frame's left bar
         let (trav, tray) = m.incoming(i);
         let per_row = match style {
             Style::Quad => 1,
@@ -913,34 +910,65 @@ impl Renderer {
         };
         let rows_tray = ((tray + per_row - 1) / per_row).min(g.rows as u32) as i32;
         let rows_trav = ((trav + per_row - 1) / per_row).min(g.rows as u32 - rows_tray as u32) as i32;
-        let mw = (cell / 4).clamp(4, 8);
-        let mx = g.fx - frame_w(g.cols * cell) - 5 - mw;
-        cv.round_rect(mx - 1, g.fy - 1, mw + 2, fh + 2, (mw + 2) / 2, 0xFF05_0814, 200);
+        let (mx, mw) = if glassy {
+            let (o, w) = meter_slot(fw);
+            (g.fx + o, w)
+        } else {
+            let w = (cell / 4).clamp(4, 8);
+            (g.fx - 8 - w, w)
+        };
+        if !glassy {
+            cv.round_rect(mx - 1, g.fy - 1, mw + 2, fh + 2, (mw + 2) / 2, 0xFF05_0814, 200);
+        }
         if rows_trav > 0 {
             let y0 = g.fy + fh - (rows_tray + rows_trav) * cell;
-            cv.round_rect(mx, y0, mw, rows_trav * cell, mw / 2, hex(0xFF9F3B), 220);
+            cv.round_rect(mx, y0, mw, rows_trav * cell, mw / 2, hex(0xFFB0_3B), 235);
         }
         if rows_tray > 0 {
-            let pulse = ((v.t * 8.0).sin() * 0.5 + 0.5) * 60.0;
+            let pulse = ((v.t * 8.0).sin() * 0.5 + 0.5) * 70.0;
             cv.round_rect(mx, g.fy + fh - rows_tray * cell, mw, rows_tray * cell, mw / 2, l.warn, 255);
             cv.round_rect(mx, g.fy + fh - rows_tray * cell, mw, rows_tray * cell, mw / 2, 0xFFFF_FFFF, pulse as u32);
         }
         let _s = crate::prof::scope("S:plate");
-        // header: a nameplate with the portrait, the name, the style chip, bot info / KOs, target
-        let name = crate::ui::nice(&v.names[i]);
         let big = fw >= 200;
-        let ns = if big { 2 } else { 1 };
-        let plate_h = g.plate_h;
-        let top = g.fy - g.lift - plate_h;
-        let glassy = st.theme == ThemeId::Voyage && st.preset != Preset::Potato;
-        let deco = glassy.then_some(accent);
-        let (plx, plw) = (g.fx - 8, fw + 16);
-        hud_plate(cv, deco, plx, top, plw, plate_h, plate_h / 2);
-        let name_col = if v.humans[i] { l.accent } else { 0xFFFF_FFFF };
-        // the character: a portrait that pops out of the plate and reacts to the board
-        let mut name_x = plx + plate_h / 2 - 4;
+        // the extra numbers (lines, sent, target...) go on cards at the foot of the side column
+        let side_x = g.fx + fw + fwid + 10;
+        let mut sy = self.side_y[i];
+        for (lab, val) in stat_pairs(m, i).into_iter().filter(|p| p.0 != "Score") {
+            sy = side_value(cv, deco, side_x, sy, g.side, &lab.to_uppercase(), &val, None, 0xFFFF_FFFF, &l);
+        }
+        // the score: big outlined digits over the frame's bottom edge
+        let score = format!("{:08}", board.score());
+        // big, but clear of the portrait at the left end of the name bar
+        let mut spx = score_px(fw).min((2 * fwid + 2) as f32);
+        while spx > 10.0 && chunky_w(&score, spx) > fw as f32 * 0.74 {
+            spx -= 1.0;
+        }
+        let score_y = (g.fy + fh + fwid + 1) as f32;
+        if glassy {
+            chunky(cv, (g.fx + fw / 2) as f32, score_y, &score, spx, 0xFFFF_FFFF, 255);
+        } else {
+            let w = crate::font::measure(&score, spx, Weight::Bold);
+            crate::font::draw(cv, (g.fx + fw / 2) as f32 - w / 2.0, score_y + spx * 0.35, &score, spx, Weight::Bold, l.text, 255);
+        }
+        // the name bar under the board, in the seat's colour
+        let bar = g.plate_h;
+        let (bx, bw) = (g.fx - fwid, fw + 2 * fwid);
+        let by = g.fy + fh + fwid + spx as i32 / 2 + 8;
+        let br = bar / 2;
+        if glassy {
+            cv.soft_shadow(bx, by + 3, bw, bar, br, 8, 150);
+            cv.round_rect(bx - 3, by - 3, bw + 6, bar + 6, br + 3, INK, 255);
+            cv.round_grad(bx, by, bw, bar, br, lighten(color, 100), darken(color, 30), 255);
+            cv.round_ring(bx + 2, by + 2, bw - 4, bar - 4, br - 2, 2, 0xFFFF_FFFF, lighten(color, 120), 200);
+            cv.round_rect(bx + br, by + 4, (bw - 2 * br) / 2, (bar / 8).max(2), 2, 0xFFFF_FFFF, 170);
+        } else {
+            cv.round_rect(bx, by, bw, bar, 6, 0xFF0A_0E1E, 230);
+        }
+        // the portrait pops out of the left end of the bar
+        let ps = bar * 17 / 10;
+        let mut left = bx + br;
         if st.characters {
-            let member = &crate::cast::CAST[v.chars[i].min(crate::cast::CAST.len() - 1)];
             let expr = if m.outcome != Outcome::Running && m.is_winner(i) {
                 "delighted"
             } else if !seat.alive {
@@ -952,81 +980,72 @@ impl Renderer {
             } else {
                 "smile"
             };
-            let ps = if big { 76 } else { 50 };
-            let px = plx + 2;
-            let py = top + plate_h - ps;
-            cv.circle((px + ps / 2) as f32, (py + ps / 2 + 2) as f32, ps as f32 * 0.47, member.color, 255);
-            cv.set_clip(px, py - ps, ps, ps * 2 - 2);
-            crate::assets::draw_portrait(cv, member.id, expr, px - ps / 10, py - ps / 8, ps + ps / 5, 255, false);
+            let (px, py) = (bx - ps / 6, by + bar - ps);
+            cv.circle((px + ps / 2) as f32, (by + bar / 2) as f32, bar as f32 * 0.62, INK, 255);
+            cv.circle((px + ps / 2) as f32, (by + bar / 2) as f32, bar as f32 * 0.55, member.color, 255);
+            cv.set_clip(px - ps / 4, py - ps / 2, ps + ps / 2, ps + ps / 2 - ((ps - bar) / 2 - bar / 2).max(0) - 1);
+            crate::assets::draw_portrait(cv, member.id, expr, px - ps / 10, py, ps + ps / 5, 255, false);
             cv.reset_clip();
-            name_x = px + ps + 6;
+            left = px + ps + 2;
         }
-        let right = plx + plw - if big { 14 } else { 10 };
-        let ny = top + if big { 5 } else { 4 };
-        // style chip: always on a big plate, on a small one only when the whole name still fits
+        // the style chip at the right end
         let sname = crate::ui::title_case(style.name());
-        let sw = Canvas::text_wb(&sname, 1, Weight::Bold) + 14;
-        let sh = Canvas::px(1) as i32 + 4;
-        let chip = big || Canvas::text_wb(&name, ns, Weight::Bold) + sw + 8 <= right - name_x;
-        let name_room = right - name_x - if chip { sw + 8 } else { 0 };
-        cv.text_weight(name_x, ny, &fit_text(&name, ns, Weight::Bold, name_room), ns, name_col, 255, Weight::Bold);
-        if chip {
-            let (sx, sy) = (right - sw, ny + if big { 3 } else { -1 });
-            cv.round_rect(sx, sy, sw, sh, sh / 2, accent, 235);
-            cv.text_weight(sx + 7, sy + 1, &sname, 1, 0xFF0A_0E1E, 255, Weight::Bold);
+        let chip_w = Canvas::text_wb(&sname, 1, Weight::Bold) + 14;
+        let chip_h = Canvas::px(1) as i32 + 4;
+        let right = bx + bw - br / 2 - 4;
+        let show_chip = big || bw >= 150;
+        if show_chip {
+            let (cx0, cy0) = (right - chip_w, by + (bar - chip_h) / 2);
+            cv.round_rect(cx0 - 1, cy0 - 1, chip_w + 2, chip_h + 2, chip_h / 2 + 1, INK, 255);
+            cv.round_rect(cx0, cy0, chip_w, chip_h, chip_h / 2, style_accent(style), 255);
+            cv.text_weight(cx0 + 7, cy0 + 1, &sname, 1, INK, 255, Weight::Bold);
         }
-        // second line: bot info and KO stars on the left, the current target on the right
-        let line2 = ny + Canvas::px(ns) as i32 + if big { 1 } else { 0 };
-        let mut room = right - name_x;
-        if m.active_count() > 2 && seat.alive && seat.target != 0xFF {
-            let t = format!("\u{2192} {}", crate::ui::nice(&v.names[seat.target as usize]));
-            if Canvas::text_w(&t, 1) <= room {
-                cv.text_right(right, line2, &t, 1, l.dim);
-                room -= Canvas::text_w(&t, 1) + 8;
-            }
+        // the name, centred in the room that is left
+        let name = crate::ui::nice(&v.names[i]);
+        let room_r = if show_chip { right - chip_w - 6 } else { right };
+        let mut npx = (bar as f32 * 0.56).min(24.0);
+        while npx > 9.0 && crate::font::measure(&name, npx, Weight::Display) > (room_r - left - 4) as f32 {
+            npx -= 1.0;
         }
+        let ncx = (left + room_r) as f32 / 2.0;
+        if glassy {
+            chunky(cv, ncx, (by + bar / 2) as f32, &name, npx, if v.humans[i] { 0xFFFF_F3A0 } else { 0xFFFF_FFFF }, 255);
+        } else {
+            let w = crate::font::measure(&name, npx, Weight::Bold);
+            crate::font::draw(cv, ncx - w / 2.0, (by + bar / 2) as f32 + npx * 0.35, &name, npx, Weight::Bold, if v.humans[i] { l.accent } else { l.text }, 255);
+        }
+        // under the bar: bot info and KO stars on the left, the current target on the right
+        let line = by + bar + 5;
         let stars: String = std::iter::repeat('\u{2605}').take(seat.kos.min(8) as usize).collect();
         let mut info = String::new();
         if seat.cfg.kind == SeatKind::Bot {
             info = if big { format!("{}   Lv {}", crate::ui::title_case(seat.cfg.personality.name()), seat.cfg.strength) } else { format!("Lv {}", seat.cfg.strength) };
         }
-        for cand in [if info.is_empty() { stars.clone() } else if stars.is_empty() { info.clone() } else { format!("{}  {}", info, stars) }, stars.clone(), info.clone()] {
-            if !cand.is_empty() && Canvas::text_w(&cand, 1) <= room {
-                cv.text_s(name_x, line2, &cand, 1, l.dim);
-                break;
+        if !stars.is_empty() {
+            info = if info.is_empty() { stars } else { format!("{}  {}", info, stars) };
+        }
+        let mut room = bw - 8;
+        if m.active_count() > 2 && seat.alive && seat.target != 0xFF {
+            let t = format!("\u{2192} {}", crate::ui::nice(&v.names[seat.target as usize]));
+            if Canvas::text_w(&t, 1) <= room {
+                cv.text_right(bx + bw - 4, line, &t, 1, 0xFFFF_FFFF);
+                room -= Canvas::text_w(&t, 1) + 8;
             }
         }
-        let _s = crate::prof::scope("S:footer");
-        // footer: the seat's numbers on a pill under the cabinet
-        let vs = if big { 2 } else { 1 };
-        let mut pairs = stat_pairs(m, i);
-        let need = |p: &[(&str, String)]| p.iter().map(|(a, b)| Canvas::text_w(a, 1) + 6 + Canvas::text_wb(b, vs, Weight::Bold)).sum::<i32>() + 14 * (p.len() as i32 - 1);
-        while pairs.len() > 1 && need(&pairs) > plw - 16 {
-            pairs.pop();
-        }
-        let pill_h = if big { 30 } else { 20 };
-        let py = g.fy + fh + frame_w(g.cols * cell) + 9;
-        hud_plate(cv, deco, plx, py, plw, pill_h, pill_h / 2);
-        let colw = (plw - 16) / pairs.len().max(1) as i32;
-        for (k, (lab, val)) in pairs.iter().enumerate() {
-            let (lw, vw) = (Canvas::text_w(lab, 1), Canvas::text_wb(val, vs, Weight::Bold));
-            let x0 = plx + 8 + k as i32 * colw + (colw - lw - 6 - vw) / 2;
-            let vy = py + (pill_h - Canvas::px(vs) as i32) / 2 - 1;
-            let ly = vy + ((Canvas::px(vs) - Canvas::px(1)) * 0.74) as i32;
-            cv.text_a(x0, ly, lab, 1, l.dim, 255);
-            cv.text_weight(x0 + lw + 6, vy, val, vs, l.text, 255, Weight::Bold);
+        if !info.is_empty() && Canvas::text_w(&info, 1) <= room {
+            cv.text_s(bx + 4, line, &info, 1, 0xFFE8_ECFF);
         }
         if v.settings.input_display && v.humans[i] {
-            draw_inputs(cv, g.fx, py + pill_h + 6, v.inputs[i], ts, &l);
+            draw_inputs(cv, g.fx, line + 14, v.inputs[i], ts, &l);
         }
-        // dead / winner overlays
+        // knocked out, or the winner
         if !seat.alive {
-            cv.rect_a(g.fx, g.fy, fw, fh, 0xFF00_0000, 150);
+            cv.rect_a(g.fx, g.fy, fw, fh, 0xFF00_0000, 160);
             let txt = if seat.ko_by.is_some() { "K.O." } else { "TOP OUT" };
-            cv.text_center(g.fx + fw / 2, g.fy + fh / 2 - 8 * ts, txt, ts + 1, l.warn);
+            chunky(cv, (g.fx + fw / 2) as f32, (g.fy + fh / 2) as f32, txt, (fw as f32 * 0.22).clamp(14.0, 56.0), l.warn, 255);
         }
         if m.outcome != Outcome::Running && m.is_winner(i) && !m.header.mode.is_solo() {
-            cv.text_center(g.fx + fw / 2, g.fy + fh / 2 - 20 * ts, "WIN!", ts + 2, l.accent);
+            chunky(cv, (g.fx + fw / 2) as f32, (g.fy + fh * 2 / 5) as f32, "WIN!", (fw as f32 * 0.26).clamp(16.0, 64.0), 0xFFFF_E14A, 255);
         }
     }
 
@@ -1105,31 +1124,43 @@ impl Renderer {
                 cv.blit(spr, g.fx + (p.x + dx) * cell, g.fy + (p.y + dy - qd::VIS0) * cell, 255);
             }
         }
-        // hold and next, each in its own framed box beside the cabinet
+        // Hold sits in the tab drawn with the frame; Next is a card with smaller cards under it
         cv.reset_clip();
         let l = look(st.theme);
         let glassy = st.theme == ThemeId::Voyage && st.preset != Preset::Potato;
-        let deco = glassy.then_some(CYAN);
-        let (sw, top) = (g.side, g.fy - 8);
-        let s1 = ((sw - 12) / 4).max(3);
-        let s2 = (s1 * 4 / 5).max(3);
-        let head = side_head(sw, "HOLD");
-        let hx = g.fx - frame_w(g.cols * cell) - 19 - sw;
-        side_box(cv, deco, hx, top, sw, head + s1 * 3 + 4, "HOLD", &l);
+        let deco = glassy.then_some(seat_color(seat));
+        let fw = g.cols * cell;
+        let fwid = frame_w(fw);
+        let sw = g.side;
+        let s1 = ((sw - 18) / 4).max(3);
+        let s2 = (s1 * 3 / 4).max(3);
+        let (hx, hy, hw, hh, hb) = hold_rect(g);
         if let Some(h) = q.hold {
             let c = if q.hold_used { GRAY } else { theme_tint(st.theme, qd_color(h + 1)) };
-            self.mini_piece(cv, h, hx, top + head, sw, s1 * 3, s1, c, pat, flat);
+            let lab = (card_label_px(hw, "HOLD") * 0.5) as i32;
+            self.mini_piece(cv, h, hx + hb, hy + hb + lab, hw - 2 * hb, hh - 2 * hb - lab, s1, c, pat, flat);
         }
-        let nx = g.fx + g.cols * cell + frame_w(g.cols * cell) + 8;
+        let nx = g.fx + fw + fwid + 10;
         let n = q.cfg.preview.min(q.queue.len()) as i32;
+        let mut y = self.side_y[seat];
         if n > 0 {
-            side_box(cv, deco, nx, top, sw, head + s1 * 3 + (n - 1) * s2 * 3 + 4, "NEXT", &l);
-            for (k, &t) in q.queue.iter().take(n as usize).enumerate() {
-                let c = theme_tint(st.theme, qd_color(t + 1));
-                let (s, y) = if k == 0 { (s1, top + head) } else { (s2, top + head + s1 * 3 + (k as i32 - 1) * s2 * 3) };
-                self.mini_piece(cv, t, nx, y, sw, s * 3, s, c, pat, flat);
+            let head = side_head(sw, "NEXT");
+            let lab = (card_label_px(sw, "NEXT") * 0.5) as i32;
+            let h1 = s1 * 3 + 14 + lab;
+            side_box(cv, deco, nx, y + head, sw, h1, "NEXT", &l);
+            let t0 = q.queue[0];
+            self.mini_piece(cv, t0, nx, y + head + lab, sw, h1 - lab, s1, theme_tint(st.theme, qd_color(t0 + 1)), pat, flat);
+            y += head + h1 + 7;
+            let w2 = sw * 4 / 5;
+            for &t in q.queue.iter().take(n as usize).skip(1) {
+                let h2 = s2 * 3 + 10;
+                side_box(cv, deco, nx + (sw - w2) / 2, y, w2, h2, "", &l);
+                self.mini_piece(cv, t, nx + (sw - w2) / 2, y + 1, w2, h2, s2, theme_tint(st.theme, qd_color(t + 1)), pat, flat);
+                y += h2 + 6;
             }
+            y += 8;
         }
+        self.side_y[seat] = y;
     }
 
     /// A piece centred in the slot (x, y, w, h), drawn with cells of size `s`.
@@ -1146,7 +1177,7 @@ impl Renderer {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn draw_chain(&mut self, cv: &mut Canvas, c: &ch::ChainState, g: &Geom, faces: bool, flat: bool, st: &Settings, t: f32) {
+    fn draw_chain(&mut self, cv: &mut Canvas, seat: usize, c: &ch::ChainState, g: &Geom, faces: bool, flat: bool, st: &Settings, t: f32) {
         let cell = g.cell;
         let l = look(st.theme);
         // the X cell, always visible
@@ -1243,28 +1274,32 @@ impl Renderer {
         }
         cv.reset_clip();
         let glassy = st.theme == ThemeId::Voyage && st.preset != Preset::Potato;
-        let deco = glassy.then_some(GREEN);
-        let (sw, top) = (g.side, g.fy - 8);
-        let nx = g.fx + g.cols * cell + frame_w(g.cols * cell) + 8;
-        let s1 = cell.min(sw - 14).max(4);
+        let deco = glassy.then_some(seat_color(seat));
+        let sw = g.side;
+        let nx = g.fx + g.cols * cell + frame_w(g.cols * cell) + 10;
+        let s1 = cell.min(sw - 22).max(4);
         let s2 = (s1 * 3 / 4).max(4);
-        let head = side_head(sw, "NEXT");
         let pairs = c.next_pairs();
-        let gap = (s1 / 4).max(3);
-        let bh = head + s1 * 2 + (pairs.len() as i32 - 1).max(0) * (s2 * 2 + gap) + 6;
-        side_box(cv, deco, nx, top, sw, bh, "NEXT", &l);
+        let mut y = self.side_y[seat];
+        let head = side_head(sw, "NEXT");
         for (k, (a, b)) in pairs.iter().enumerate() {
-            let s = if k == 0 { s1 } else { s2 };
-            let y0 = top + head + if k == 0 { 0 } else { s1 * 2 + gap + (k as i32 - 1) * (s2 * 2 + gap) };
+            let (s, w) = if k == 0 { (s1, sw) } else { (s2, sw * 4 / 5) };
+            let lab = if k == 0 { (card_label_px(sw, "NEXT") * 0.5) as i32 } else { 0 };
+            let h = s * 2 + 14 + lab;
+            let (x, top) = (nx + (sw - w) / 2, if k == 0 { y + head } else { y });
+            side_box(cv, deco, x, top, w, h, if k == 0 { "NEXT" } else { "" }, &l);
             for (j, col) in [b, a].iter().enumerate() {
                 let colr = theme_tint(st.theme, chain_color(**col));
                 let spr = self.sprites.get(SpriteKey { kind: CellKind::Blob, color: colr, size: s, face: faces && s >= 16, pattern: st.colorblind, flat, frame: 0 });
-                cv.blit(spr, nx + (sw - s) / 2, y0 + j as i32 * s, 255);
+                cv.blit(spr, x + (w - s) / 2, top + 7 + lab + j as i32 * s, 255);
             }
+            y = top + h + 7;
         }
+        y += 8;
         if c.all_clear_bonus {
-            side_value(cv, deco, nx, top + bh + 8, sw, "BONUS", "+30", None, l.good, &l);
+            y = side_value(cv, deco, nx, y, sw, "BONUS", "+30", None, l.good, &l);
         }
+        self.side_y[seat] = y;
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1317,30 +1352,33 @@ impl Renderer {
         cv.reset_clip();
         let l = look(st.theme);
         let glassy = st.theme == ThemeId::Voyage && st.preset != Preset::Potato;
-        let deco = glassy.then_some(PINK);
-        let (sw, top) = (g.side, g.fy - 8);
-        let nx = g.fx + g.cols * cell + frame_w(g.cols * cell) + 8;
-        let s = cell.min((sw - 12) / 2).max(4);
+        let deco = glassy.then_some(seat_color(seat));
+        let sw = g.side;
+        let nx = g.fx + g.cols * cell + frame_w(g.cols * cell) + 10;
+        let s = cell.min((sw - 20) / 2).max(4);
         let head = side_head(sw, "NEXT");
-        let bh = head + s + 8;
-        side_box(cv, deco, nx, top, sw, bh, "NEXT", &l);
+        let mut y = self.side_y[seat];
+        let lab = (card_label_px(sw, "NEXT") * 0.5) as i32;
+        let bh = s + 16 + lab;
+        side_box(cv, deco, nx, y + head, sw, bh, "NEXT", &l);
         if let Some((a, b)) = c.preview() {
             for (j, (col, kind)) in [(a, CellKind::HalfL), (b, CellKind::HalfR)].iter().enumerate() {
                 let colr = theme_tint(st.theme, capsule_color(*col));
                 let spr = self.sprites.get(SpriteKey { kind: *kind, color: colr, size: s, face: faces, pattern: st.colorblind, flat, frame: 0 });
-                cv.blit(spr, nx + sw / 2 - s + j as i32 * s, top + head + 1, 255);
+                cv.blit(spr, nx + sw / 2 - s + j as i32 * s, y + head + 8 + lab, 255);
             }
         }
-        let mut y = top + bh + 8;
-        y = side_value(cv, deco, nx, y, sw, "VIRUS", &format!("{}", c.viruses), None, l.accent, &l);
-        y = side_value(cv, deco, nx, y, sw, "LEVEL", &format!("{}", c.level), Some(&crate::ui::title_case(cap::SPEED_NAMES[c.speed as usize])), l.text, &l);
+        y += head + bh + 10;
+        y = side_value(cv, deco, nx, y, sw, "VIRUS", &format!("{}", c.viruses), None, 0xFFFF_E14A, &l);
+        y = side_value(cv, deco, nx, y, sw, "LEVEL", &format!("{}", c.level), Some(&crate::ui::title_case(cap::SPEED_NAMES[c.speed as usize])), 0xFFFF_FFFF, &l);
         if c.nes_seeds {
-            side_value(cv, deco, nx, y, sw, "SEED", &format!("{:04X}", c.nes_seed), None, l.dim, &l);
+            y = side_value(cv, deco, nx, y, sw, "SEED", &format!("{:04X}", c.nes_seed), None, 0xFFFF_FFFF, &l);
         }
+        self.side_y[seat] = y;
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn draw_panel(&mut self, cv: &mut Canvas, p: &pn::PanelState, g: &Geom, faces: bool, flat: bool, st: &Settings, t: f32) {
+    fn draw_panel(&mut self, cv: &mut Canvas, seat: usize, p: &pn::PanelState, g: &Geom, faces: bool, flat: bool, st: &Settings, t: f32) {
         let cell = g.cell;
         let rise = (p.rise_sub as i32 * cell) / pn::RISE_STEPS as i32;
         cv.set_clip(g.fx, g.fy, g.cols * cell, g.rows * cell);
@@ -1433,26 +1471,29 @@ impl Renderer {
         }
         cv.round_rect(cx + cell - 1, cy + cell / 4, 2, cell / 2, 1, 0xFFFF_FFFF, 90);
         let glassy = st.theme == ThemeId::Voyage && st.preset != Preset::Potato;
-        let deco = glassy.then_some(YELLOW);
-        let (sw, top) = (g.side, g.fy - 8);
-        let nx = g.fx + g.cols * cell + frame_w(g.cols * cell) + 8;
-        let mut y = top;
+        let deco = glassy.then_some(seat_color(seat));
+        let sw = g.side;
+        let nx = g.fx + g.cols * cell + frame_w(g.cols * cell) + 10;
+        let mut y = self.side_y[seat];
         if p.puzzle {
-            y = side_value(cv, deco, nx, y, sw, "MOVES", &format!("{}", p.moves_left.max(0)), None, l.accent, &l);
+            y = side_value(cv, deco, nx, y, sw, "MOVES", &format!("{}", p.moves_left.max(0)), None, 0xFFFF_E14A, &l);
         } else {
-            y = side_value(cv, deco, nx, y, sw, "LEVEL", &format!("{}", p.level), None, l.text, &l);
+            y = side_value(cv, deco, nx, y, sw, "LEVEL", &format!("{}", p.level), None, 0xFFFF_FFFF, &l);
         }
         if p.chain > 1 {
-            y = side_value(cv, deco, nx, y, sw, "CHAIN", &format!("x{}", p.chain), None, l.accent, &l);
+            y = side_value(cv, deco, nx, y, sw, "CHAIN", &format!("x{}", p.chain), None, 0xFFFF_E14A, &l);
         }
         if p.stop > 0 {
             // the stack is held: a bar that drains as the stop time runs out
             let head = side_head(sw, "STOP");
-            side_box(cv, deco, nx, y, sw, head + 16, "STOP", &l);
-            let bw = sw - 16;
-            cv.round_rect(nx + 8, y + head + 2, bw, 6, 3, 0xFF05_0814, 220);
-            cv.round_rect(nx + 8, y + head + 2, (p.stop.min(240) as i32 * bw / 240).max(6), 6, 3, l.good, 255);
+            let lab = (card_label_px(sw, "STOP") * 0.5) as i32;
+            side_box(cv, deco, nx, y + head, sw, 22 + lab, "STOP", &l);
+            let bw = sw - 18;
+            cv.round_rect(nx + 9, y + head + 9 + lab, bw, 6, 3, 0xFF05_0814, 220);
+            cv.round_rect(nx + 9, y + head + 9 + lab, (p.stop.min(240) as i32 * bw / 240).max(6), 6, 3, l.good, 255);
+            y += head + 22 + lab + 10;
         }
+        self.side_y[seat] = y;
     }
 }
 
@@ -1536,82 +1577,132 @@ fn stat_pairs(m: &Match, i: usize) -> Vec<(&'static str, String)> {
     }
 }
 
-/// The backing of every HUD element. On Voyage it is a toy-like part in the logo's style: an
-/// ink outline, a rim (or a caption band `head` tall) in the style's colour, a dark inside and
-/// a gloss bar. The flat themes get a plain dark card.
-#[allow(clippy::too_many_arguments)]
-fn hud_part(cv: &mut Canvas, deco: Option<u32>, x: i32, y: i32, w: i32, h: i32, r: i32, head: i32) {
-    let Some(accent) = deco else {
-        cv.round_rect(x, y, w, h, r.min(6), 0xFF0A_0E1E, 220);
-        return;
-    };
-    let r = r.min(h / 2).max(3);
-    cv.soft_shadow(x, y + 4, w, h, r, 7, 130);
-    cv.round_rect(x - 2, y - 2, w + 4, h + 4, r + 2, INK, 255);
-    cv.round_grad(x, y, w, h, r, lighten(accent, 50), darken(accent, 50), 255);
-    let inset = 3;
-    let top = if head > 0 { head } else { inset };
-    let ir = (r - inset).max(2).min((h - top - inset) / 2);
-    cv.round_grad(x + inset, y + top, w - 2 * inset, h - top - inset, ir, 0xFF1A_2148, 0xFF0B_0E22, 255);
-    let gb = if head > 0 { (head / 6).max(2) } else { 2 };
-    let gx = x + r.max(5);
-    cv.round_rect(gx, y + 2, ((w - 2 * r.max(5)) * 3 / 5).max(4), gb, gb / 2 + 1, 0xFFFF_FFFF, 170);
-}
-fn hud_plate(cv: &mut Canvas, deco: Option<u32>, x: i32, y: i32, w: i32, h: i32, r: i32) {
-    hud_part(cv, deco, x, y, w, h, r, 0);
+/// Where Quad's Hold tab sits: out of the frame's top-left corner. (x, y, w, h, border)
+fn hold_rect(g: &Geom) -> (i32, i32, i32, i32, i32) {
+    let fw = g.cols * g.cell;
+    let fwid = frame_w(fw);
+    let sw = g.side;
+    let s1 = ((sw - 18) / 4).max(3);
+    let b = (sw / 9).clamp(4, 8);
+    let lab = (card_label_px(sw, "HOLD") * 0.5) as i32;
+    (g.fx - fwid - sw + 2, g.fy - fwid + 6, sw, s1 * 3 + 2 * b + 10 + lab, b)
 }
 
-/// Height of a side box's caption strip (narrow columns drop the caption).
-fn side_head(w: i32, label: &str) -> i32 {
-    if Canvas::text_wb(label, 1, Weight::Bold) <= w - 4 { 23 } else { 6 }
+/// Chunky outlined text in the display face, centred on (cx, cy): the HOLD / NEXT words, the
+/// score, names and stamps.
+/// The width `chunky` gives a text.
+pub fn chunky_w(text: &str, px: f32) -> f32 {
+    let sp = (px / 9.0).max(1.4) * 1.1;
+    text.chars().map(|c| crate::font::measure(&c.to_string(), px, Weight::Display)).sum::<f32>() + sp * (text.chars().count().max(1) - 1) as f32
 }
 
-/// A framed box in the side column with a small caption on top.
-#[allow(clippy::too_many_arguments)]
-fn side_box(cv: &mut Canvas, deco: Option<u32>, x: i32, y: i32, w: i32, h: i32, label: &str, l: &Look) {
-    let head = side_head(w, label);
-    hud_part(cv, deco, x, y, w, h, (w / 6).clamp(5, 14), if head > 6 { head - 3 } else { 0 });
-    let lw = Canvas::text_wb(label, 1, Weight::Black);
-    if lw <= w - 4 {
-        let col = if deco.is_some() { INK } else { l.dim };
-        cv.text_weight(x + (w - lw) / 2, y + 5, label, 1, col, 255, Weight::Black);
+pub fn chunky(cv: &mut Canvas, cx: f32, cy: f32, text: &str, px: f32, fill: u32, a: u32) {
+    // letters are spaced a little wider than the face's own spacing, so each outline closes
+    // around its own letter instead of running into the next one
+    let o = (px / 9.0).max(1.4);
+    let sp = o * 1.1;
+    let chars: Vec<String> = text.chars().map(|c| c.to_string()).collect();
+    let adv: Vec<f32> = chars.iter().map(|c| crate::font::measure(c, px, Weight::Display)).collect();
+    let w = adv.iter().sum::<f32>() + sp * (chars.len().max(1) - 1) as f32;
+    let base = cy + px * 0.36;
+    for pass in 0..2 {
+        let mut x = cx - w / 2.0;
+        for (c, &dx) in chars.iter().zip(adv.iter()) {
+            if pass == 0 {
+                for k in 0..12 {
+                    let ang = k as f32 * std::f32::consts::TAU / 12.0;
+                    crate::font::draw(cv, x + ang.cos() * o, base + ang.sin() * o + o * 0.5, c, px, Weight::Display, INK, a);
+                }
+            } else {
+                crate::font::draw(cv, x, base, c, px, Weight::Display, fill, a);
+            }
+            x += dx + sp;
+        }
     }
 }
 
-/// A captioned number in the side column (virus count, level, chain...). Returns the next y.
+/// The caption size that fits a side card `w` wide.
+fn card_label_px(w: i32, label: &str) -> f32 {
+    let mut px = if w >= 70 { 19.0 } else { 14.0 };
+    while px > 9.0 && crate::font::measure(label, px, Weight::Display) > (w - 6) as f32 {
+        px -= 1.0;
+    }
+    px
+}
+
+/// Height of a side card's caption: the word sits on the card's top edge, half outside.
+fn side_head(w: i32, label: &str) -> i32 {
+    (card_label_px(w, label) * 0.55) as i32 + 4
+}
+
+/// A side card: a dark inside in a thick white rounded border with an ink outline; on the
+/// flat themes a plain dark card. The caption sits on the top edge.
+#[allow(clippy::too_many_arguments)]
+fn side_box(cv: &mut Canvas, deco: Option<u32>, x: i32, y: i32, w: i32, h: i32, label: &str, l: &Look) {
+    let r = (w / 6).clamp(5, 12);
+    if deco.is_some() {
+        cv.soft_shadow(x, y + 4, w, h, r, 7, 140);
+        cv.round_rect(x - 2, y - 2, w + 4, h + 4, r + 2, INK, 255);
+        cv.round_rect(x, y, w, h, r, 0xFFF6_F8FF, 255);
+        let b = (w / 16).clamp(3, 5);
+        cv.round_grad(x + b, y + b, w - 2 * b, h - 2 * b, (r - b).max(2), 0xFF1B_1F33, 0xFF06_070D, 255);
+        if !label.is_empty() {
+            chunky(cv, (x + w / 2) as f32, y as f32 + 1.0, label, card_label_px(w, label), 0xFFFF_FFFF, 255);
+        }
+    } else {
+        cv.round_rect(x, y, w, h, r.min(6), 0xFF0A_0E1E, 220);
+        let lw = Canvas::text_wb(label, 1, Weight::Bold);
+        if lw <= w - 4 {
+            cv.text_weight(x + (w - lw) / 2, y + 3, label, 1, l.dim, 255, Weight::Bold);
+        }
+    }
+}
+
+/// A Quad Hold tab: it grows out of the frame's top-left corner in the frame's colour.
+fn hold_tab(cv: &mut Canvas, deco: Option<u32>, x: i32, y: i32, w: i32, h: i32, l: &Look) {
+    let Some(color) = deco else {
+        side_box(cv, None, x, y, w, h, "HOLD", l);
+        return;
+    };
+    let r = (w / 6).clamp(5, 12);
+    // the tab runs a little under the frame so the two read as one piece
+    cv.soft_shadow(x, y + 5, w, h, r, 9, 150);
+    cv.round_rect(x - 3, y - 3, w + 12, h + 6, r + 3, INK, 255);
+    cv.round_grad(x, y, w + 10, h, r, lighten(color, 110), darken(color, 35), 255);
+    cv.round_rect(x + r, y + 3, (w - r) * 3 / 5, 3, 2, 0xFFFF_FFFF, 200);
+    let b = (w / 9).clamp(4, 8);
+    cv.round_rect(x + b - 2, y + b - 2, w - 2 * b + 4, h - 2 * b + 4, (r - b).max(3) + 2, INK, 255);
+    cv.round_grad(x + b, y + b, w - 2 * b, h - 2 * b, (r - b).max(3), 0xFF1B_1F33, 0xFF06_070D, 255);
+    chunky(cv, (x + w / 2) as f32, y as f32 + 1.0, "HOLD", card_label_px(w, "HOLD"), 0xFFFF_FFFF, 255);
+}
+
+/// A captioned number on a side card (virus count, level, lines...). Returns the next y.
 #[allow(clippy::too_many_arguments)]
 fn side_value(cv: &mut Canvas, deco: Option<u32>, x: i32, y: i32, w: i32, label: &str, value: &str, sub: Option<&str>, col: u32, l: &Look) -> i32 {
     let head = side_head(w, label);
-    let mut vs = if w >= 70 { 3 } else if w >= 44 { 2 } else { 1 };
-    while vs > 1 && Canvas::text_wb(value, vs, Weight::Bold) > w - 8 {
-        vs -= 1;
+    let mut vpx = if w >= 70 { 30.0 } else if w >= 50 { 22.0 } else { 16.0 };
+    while vpx > 10.0 && crate::font::measure(value, vpx, Weight::Display) > (w - 12) as f32 {
+        vpx -= 1.0;
     }
-    let vh = (Canvas::px(vs) * 0.92) as i32;
-    let sub = sub.filter(|s| Canvas::text_w(s, 1) <= w - 6);
-    let h = head + vh + if sub.is_some() { 15 } else { 0 } + 6;
-    side_box(cv, deco, x, y, w, h, label, l);
-    let vw = Canvas::text_wb(value, vs, Weight::Bold);
-    cv.text_weight(x + (w - vw) / 2, y + head - 2, value, vs, col, 255, Weight::Bold);
+    let sub = sub.filter(|s| Canvas::text_w(s, 1) <= w - 10);
+    let lab = (card_label_px(w, label) * 0.5) as i32;
+    let h = head + lab + vpx as i32 + if sub.is_some() { 14 } else { 0 } + 8;
+    let y = y + head;
+    side_box(cv, deco, x, y, w, h - head, label, l);
+    let vy = y + lab + 2 + vpx as i32 / 2;
+    if deco.is_some() {
+        let vw = crate::font::measure(value, vpx, Weight::Display);
+        crate::font::draw(cv, (x + w / 2) as f32 - vw / 2.0, vy as f32 + vpx * 0.36, value, vpx, Weight::Display, col, 255);
+    } else {
+        let vw = crate::font::measure(value, vpx, Weight::Bold);
+        crate::font::draw(cv, (x + w / 2) as f32 - vw / 2.0, vy as f32 + vpx * 0.36, value, vpx, Weight::Bold, if col == 0xFFFF_FFFF { l.text } else { col }, 255);
+    }
     if let Some(s) = sub {
-        cv.text_a(x + (w - Canvas::text_w(s, 1)) / 2, y + head + vh - 1, s, 1, l.dim, 255);
+        cv.text_a(x + (w - Canvas::text_w(s, 1)) / 2, vy + vpx as i32 / 2 + 2, s, 1, l.dim, 255);
     }
-    y + h + 8
+    y + h - head + 10
 }
 
-/// Shorten text with an ellipsis until it fits `maxw`.
-fn fit_text(s: &str, scale: i32, w: Weight, maxw: i32) -> String {
-    if Canvas::text_wb(s, scale, w) <= maxw {
-        return s.to_string();
-    }
-    let mut cs: Vec<char> = s.chars().collect();
-    while cs.pop().is_some() {
-        let t = format!("{}..", cs.iter().collect::<String>().trim_end());
-        if Canvas::text_wb(&t, scale, w) <= maxw {
-            return t;
-        }
-    }
-    String::new()
-}
 
 fn draw_inputs(cv: &mut Canvas, x: i32, y: i32, bits: u16, ts: i32, l: &Look) {
     use purtris_sim::bits as B;
