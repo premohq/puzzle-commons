@@ -359,6 +359,10 @@ impl App {
 
     pub fn frame(&mut self, win: Option<&minifb::Window>, dt: f32) -> bool {
         self.t += dt;
+        // character motion: the puppet layer on stills, and the 3D clip actors
+        crate::puppet::begin_frame(self.t, self.st.reduce_motion);
+        crate::anim::set_reduce_motion(self.st.reduce_motion || crate::puppet::is_still());
+        crate::anim::sweep();
         let mut script_shots = Vec::new();
         let mut script_quit = false;
         // glass re-snapshots the scene each frame (taken lazily by the first glass panel)
@@ -2023,8 +2027,20 @@ impl App {
                 };
                 let right = k == 1 || (active.len() == 1 && false);
                 let cx = if right { if crowd { 1180 } else { 1150 } } else if crowd { 100 } else { 130 };
-                let bob = if self.st.reduce_motion { 0 } else { ((self.t * 1.6 + k as f32).sin() * 3.0) as i32 };
-                crate::assets::draw_char_ex(&mut self.cv, member.id, expr, cx, 712 + bob, if crowd { 520 } else { 600 }, 255, right);
+                let ch = if crowd { 520 } else { 600 };
+                if crate::anim::has_clips(member.id) {
+                    // 3D motion clips (anim.rs); reactions come from game.rs events
+                    let mood = match expr {
+                        "delighted" => crate::anim::Mood::Win,
+                        "sad" => crate::anim::Mood::Lose,
+                        "shocked" => crate::anim::Mood::Worried,
+                        _ => crate::anim::Mood::Idle,
+                    };
+                    crate::anim::draw(&mut self.cv, &format!("seat{}", i), member.id, mood, cx, 712, ch, 255, right);
+                } else {
+                    // the still, moved by the puppet layer (puppet.rs)
+                    crate::assets::draw_char_ex(&mut self.cv, member.id, expr, cx, 712, ch, 255, right);
+                }
                 let mname = crate::cast::name_of(member.id);
                 let nw = Canvas::text_wb(&mname, 2, crate::font::Weight::Black) + 36;
                 self.cv.round_grad(cx - nw / 2, 640, nw, 36, 18, crate::gfx::lighten(member.color, 40), member.color, 255);

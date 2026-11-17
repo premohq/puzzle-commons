@@ -395,11 +395,17 @@ pub fn draw_char_ex(cv: &mut Canvas, name: &str, expr: &str, cx: i32, bottom: i3
     let ph = cv.us(h);
     let (cxp, bp) = (cv.u(cx), cv.u(bottom));
     let k = cv.k;
+    // the puppet layer (puppet.rs): breathing, sway, reactions, a crossfade between expressions
+    let mo = crate::puppet::motion(name, key, expr, false, cx, bottom, h);
     with_cast(key, ph, flip, |img| {
-        // soft contact shadow under the feet, then the character
-        cv.ellipse(cx as f32, bottom as f32 - 4.0, img.w as f32 / k * 0.26, (h as f32 * 0.022).max(3.0), 0xFF00_0000, alpha / 3);
-        cv.blit_px(img, cxp - img.w / 2, bp - img.h, alpha);
+        // soft contact shadow under the feet (smaller and lighter while airborne), then the character
+        let air = (1.0 - mo.pose.lift.max(0.0) * 6.0).clamp(0.4, 1.0);
+        cv.ellipse(cx as f32, bottom as f32 - 4.0, img.w as f32 / k * 0.26 * mo.pose.sx * air, (h as f32 * 0.022).max(3.0) * air, 0xFF00_0000, (alpha as f32 / 3.0 * air) as u32);
+        crate::puppet::blit(cv, img, cxp, bp, alpha, &mo.pose);
     });
+    if let Some((pk, m)) = mo.prev {
+        with_cast(pk, ph, flip, |img| crate::puppet::blit(cv, img, cxp, bp, (alpha as f32 * m) as u32, &mo.pose));
+    }
 }
 
 /// Light and size a standing sprite now, so drawing it later costs nothing.
@@ -415,7 +421,16 @@ pub fn draw_portrait(cv: &mut Canvas, name: &str, expr: &str, x: i32, y: i32, si
     let Some(key) = cast_key(name, expr, true) else { return };
     let ph = cv.us(size);
     let (xp, yp) = (cv.u(x), cv.u(y));
-    with_cast(key, ph, flip, |img| cv.blit_px(img, xp + (ph - img.w) / 2, yp, alpha));
+    // small icons stay crisp; bigger portraits breathe and react like the full figures
+    if size < 90 {
+        with_cast(key, ph, flip, |img| cv.blit_px(img, xp + (ph - img.w) / 2, yp, alpha));
+        return;
+    }
+    let mo = crate::puppet::motion(name, key, expr, true, x + size / 2, y + size, size);
+    with_cast(key, ph, flip, |img| crate::puppet::blit(cv, img, xp + ph / 2, yp + img.h, alpha, &mo.pose));
+    if let Some((pk, m)) = mo.prev {
+        with_cast(pk, ph, flip, |img| crate::puppet::blit(cv, img, xp + ph / 2, yp + img.h, (alpha as f32 * m) as u32, &mo.pose));
+    }
 }
 
 /// The rival who waits in each story world.

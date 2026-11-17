@@ -92,6 +92,11 @@ fn pca(id: &str) -> Option<&'static Pca> {
 }
 
 /// Whether a cast member has animation clips.
+/// Whether cast member `id` has motion clips (the courier: whichever model the player picked).
+pub fn has_clips(id: &str) -> bool {
+    has_anim(if id == "mira" { crate::cast::hero_sprite() } else { id })
+}
+
 pub fn has_anim(id: &str) -> bool {
     pca(id).is_some()
 }
@@ -525,6 +530,8 @@ fn spawn(pca: &'static Pca) -> (Sender<Req>, Receiver<Res>) {
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Mood {
     Idle,
+    /// the talk clip (rendered; scenes use the puppet layer, so nothing asks for it yet)
+    #[allow(dead_code)]
     Talk,
     Worried,
     Win,
@@ -828,6 +835,7 @@ pub fn react(slot: &str, r: React, toward: f32) {
 }
 
 /// Restart the character in `slot` (a new match, a new scene).
+#[allow(dead_code)]
 pub fn reset(slot: &str) {
     STATE.with(|s| {
         s.borrow_mut().actors.remove(slot);
