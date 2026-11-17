@@ -51,6 +51,14 @@ pub fn bench(width: i32) {
         ("menu", Box::new(|| Screen::Main(ListState::default()))),
         ("story", Box::new(|| Screen::Story { world: 0, node: 0, diff: 1, chosen: 0, talk: true })),
         ("settings", Box::new(|| Screen::Settings(ListState::default(), 0))),
+        (
+            "scene",
+            Box::new(|| {
+                let mut v = crate::scene_ui::SceneView::new(cast_id("w0_intro"), Screen::Title);
+                v.seek(2, 0.6, 12.0);
+                Screen::Scene(Box::new(v))
+            }),
+        ),
     ];
     println!("frame times at {}x{} (k = {:.2})", app.cv.w, app.cv.h, app.cv.k);
     {
@@ -86,7 +94,10 @@ pub fn bench(width: i32) {
     }
     for (name, mk) in screens.iter() {
         app.screen = mk();
-        app.frame(None, 0.016);
+        // settle (story scenes slide their cast in and light it on the first frames)
+        for _ in 0..30 {
+            app.frame(None, 0.016);
+        }
         crate::prof::enable(true);
         let t0 = std::time::Instant::now();
         for _ in 0..30 {
@@ -247,4 +258,100 @@ pub fn banner(path: &str) {
     let px: Vec<u32> = app.cv.px[top * w..(top + band) * w].to_vec();
     crate::png::write(path, w, band, &px).unwrap();
     println!("wrote {}", path);
+}
+
+/// Story scene frames: `--scene-shots DIR WIDTH`.
+pub fn scenes(dir: &str, width: i32) {
+    let _ = std::fs::create_dir_all(dir);
+    let synth = Arc::new(Mutex::new(crate::audio::Synth::new()));
+    let input = crate::input::Input::new(None);
+    let mut app = App::new(input, synth, false);
+    app.st = crate::save::Settings::default();
+    app.st.benched = true;
+    app.apply_settings();
+    app.cv = crate::gfx::Canvas::screen(width);
+    // (file, scene, line, seconds into the line, seconds into the scene)
+    let frames: &[(&str, &str, usize, f32, f32)] = &[
+        ("s01_card_drop", "w0_intro", 0, 0.0, 0.62),
+        ("s02_card_full", "w0_intro", 0, 0.0, 1.5),
+        ("s03_card_out", "w0_intro", 0, 0.0, 2.15),
+        ("s04_first_line_typing", "w0_intro", 0, 0.9, 3.0),
+        ("s05_line_done", "w0_intro", 1, 6.0, 9.0),
+        ("s06_three_on_stage", "w0_intro", 2, 0.5, 12.0),
+        ("s07_prologue_dusk", "prologue", 3, 6.0, 9.0),
+        ("s08_valley_mid", "w1_mid", 3, 1.2, 9.0),
+        ("s09_moon_night", "w2_mid", 4, 6.0, 9.0),
+        ("s10_bazaar", "w3_intro", 2, 6.0, 9.0),
+        ("s11_cinder_duel", "w4_boss", 1, 6.0, 9.0),
+        ("s12_crowd", "w4_clear", 9, 6.0, 15.0),
+        ("s13_epilogue", "epilogue", 6, 6.0, 15.0),
+    ];
+    for &(name, id, line, lt, st) in frames {
+        // play the scene up to `line` so the stage has settled like it would in the game
+        let mut v = crate::scene_ui::SceneView::new(cast_id(id), Screen::Title);
+        v.seek(line, lt, st);
+        app.screen = Screen::Scene(Box::new(v));
+        for _ in 0..40 {
+            app.frame(None, 1.0 / 60.0);
+            if let Screen::Scene(v) = &mut app.screen {
+                v.seek(line, lt, st);
+            }
+        }
+        app.frame(None, 1.0 / 60.0);
+        save(&app, dir, name);
+    }
+    // the expression change mid-hop, and the backlog
+    let mut v = crate::scene_ui::SceneView::new(cast_id("w0_intro"), Screen::Title);
+    v.seek(2, 3.0, 12.0);
+    app.screen = Screen::Scene(Box::new(v));
+    for _ in 0..30 {
+        app.frame(None, 1.0 / 60.0);
+    }
+    if let Screen::Scene(v) = &mut app.screen {
+        v.seek(3, 0.0, 13.0);
+    }
+    for _ in 0..7 {
+        app.frame(None, 1.0 / 60.0);
+    }
+    save(&app, dir, "s14_expression_hop");
+    if let Screen::Scene(v) = &mut app.screen {
+        v.seek(6, 6.0, 20.0);
+        v.open_log();
+    }
+    app.frame(None, 1.0 / 60.0);
+    save(&app, dir, "s15_backlog");
+}
+
+fn cast_id(id: &str) -> &'static str {
+    crate::cast::SCENES.iter().find(|s| s.id == id).map(|s| s.id).unwrap_or("prologue")
+}
+
+/// The cast under every world's light: `--light-shots DIR WIDTH`.
+pub fn lights(dir: &str, width: i32) {
+    use crate::light::{self, Mood, Rig};
+    let _ = std::fs::create_dir_all(dir);
+    let maps = crate::assets::load_maps();
+    let mut cv = crate::gfx::Canvas::screen(width);
+    let configs: Vec<(String, Option<usize>, Rig)> = std::iter::once(("studio".to_string(), None, Rig::STUDIO))
+        .chain((0..5).flat_map(|w| [Mood::Day, Mood::Dusk, Mood::Night, Mood::Duel, Mood::Golden].into_iter().map(move |m| (format!("w{}_{:?}", w, m).to_lowercase(), Some(w), light::world(w, m)))))
+        .collect();
+    for (name, w, rig) in configs {
+        match w {
+            Some(w) => {
+                let m = crate::assets::resample(&maps[w].image, cv.w, cv.h);
+                cv.copy_from(&m);
+                let mood = [Mood::Day, Mood::Dusk, Mood::Night, Mood::Duel, Mood::Golden].into_iter().find(|m| name.ends_with(&format!("{:?}", m).to_lowercase())).unwrap();
+                let (c, a, _) = light::grade(w, mood);
+                cv.rect_a(0, 0, 1280, 720, c, a);
+            }
+            None => cv.vgrad(0, 0, 1280, 720, 0xFF30_3850, 0xFF14_1828),
+        }
+        light::set(rig);
+        crate::assets::draw_char_ex(&mut cv, "mira", "smile", 330, 1240, 1160, 255, false);
+        crate::assets::draw_char_ex(&mut cv, "kaede", "smug", 950, 1240, 1160, 255, true);
+        crate::assets::draw_portrait(&mut cv, "kai", "smile", 540, 380, 200, 255, false);
+        let p = format!("{}/{}.png", dir, name);
+        crate::png::write(&p, cv.w as usize, cv.h as usize, &cv.px).unwrap();
+    }
+    println!("wrote {}", dir);
 }

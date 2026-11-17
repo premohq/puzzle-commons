@@ -592,7 +592,271 @@ def cast():
             f.write("creature %s %s\n" % (cid, name))
 
 
+# ------------------------------------------------------------------ lighting passes
+# The game lights the cast itself (crates/purtris-client/src/light.rs), so each scene's sun,
+# sky, bounce and rim light fall on the characters. Every pose is rendered twice:
+#   <id>_<expr>_<frame>.png    albedo: the textures' own color, unlit, with the ink line
+#   <id>_<expr>_<frame>_n.png  half size: camera-space normal in R,G (x, y; z is implied)
+#                              and the material class in B (see CLASSES)
+CAM_AXES = []  # (axis index, socket) of every normal projection, aimed at the current camera
+CLASSES = {"unlit": 0.0, "face": 0.25, "skin": 0.5, "cloth": 0.75, "hair": 1.0}
+
+
+def material_class(name):
+    low = name.lower()
+    if low == "ink" or low.endswith("_eye") or (low.endswith("_face") and "skin" not in low):
+        return "unlit"
+    if "face" in low and "skin" in low:
+        return "face"
+    if "skin" in low or "body" in low:
+        return "skin"
+    if "hair" in low:
+        return "hair"
+    return "cloth"
+
+
+def _emission_mat(name, color_fn, alpha_fn=None, blended=False):
+    m = bpy.data.materials.new(name)
+    m.use_nodes = True
+    nt = m.node_tree
+    for n in list(nt.nodes):
+        nt.nodes.remove(n)
+    out = nt.nodes.new("ShaderNodeOutputMaterial")
+    em = nt.nodes.new("ShaderNodeEmission")
+    em.inputs["Strength"].default_value = 1.0
+    nt.links.new(color_fn(nt), em.inputs["Color"])
+    if alpha_fn is None:
+        nt.links.new(em.outputs[0], out.inputs["Surface"])
+    else:
+        tr = nt.nodes.new("ShaderNodeBsdfTransparent")
+        mx = nt.nodes.new("ShaderNodeMixShader")
+        nt.links.new(alpha_fn(nt), mx.inputs[0])
+        nt.links.new(tr.outputs[0], mx.inputs[1])
+        nt.links.new(em.outputs[0], mx.inputs[2])
+        nt.links.new(mx.outputs[0], out.inputs["Surface"])
+        mode = "BLENDED" if blended else "DITHERED"
+        for attr, val in (("surface_render_method", mode), ("blend_method", "BLEND" if blended else "HASHED")):
+            try:
+                setattr(m, attr, val)
+            except Exception:
+                pass
+    return m
+
+
+def _normal_socket(nt, cls):
+    """Camera-space shading normal (flipped on back faces), packed to 0..1, class in B."""
+    geo = nt.nodes.new("ShaderNodeNewGeometry")
+    flip = nt.nodes.new("ShaderNodeVectorMath")
+    flip.operation = "SCALE"
+    nt.links.new(geo.outputs["Normal"], flip.inputs[0])
+    fac = nt.nodes.new("ShaderNodeMath")
+    fac.operation = "MULTIPLY_ADD"
+    nt.links.new(geo.outputs["Backfacing"], fac.inputs[0])
+    fac.inputs[1].default_value = -2.0
+    fac.inputs[2].default_value = 1.0
+    nt.links.new(fac.outputs[0], flip.inputs["Scale"])
+    # project onto the camera's axes (set per render by use_pass: right, up, toward the viewer)
+    comb = nt.nodes.new("ShaderNodeCombineXYZ")
+    for i in range(2):
+        dot = nt.nodes.new("ShaderNodeVectorMath")
+        dot.operation = "DOT_PRODUCT"
+        nt.links.new(flip.outputs[0], dot.inputs[0])
+        CAM_AXES.append((i, dot.inputs[1]))
+        ma = nt.nodes.new("ShaderNodeMath")
+        ma.operation = "MULTIPLY_ADD"
+        nt.links.new(dot.outputs["Value"], ma.inputs[0])
+        ma.inputs[1].default_value = 0.5
+        ma.inputs[2].default_value = 0.5
+        nt.links.new(ma.outputs[0], comb.inputs[i])
+    comb.inputs[2].default_value = CLASSES[cls]
+    return comb.outputs[0]
+
+
+def gltf_factor(gltf, name):
+    """The glTF baseColorFactor of a material (VRoid tints lashes, brows and eye lines with it)."""
+    base = name.split(".")[0]
+    for m in gltf.get("materials", []):
+        if m.get("name") == base:
+            return tuple(m.get("pbrMetallicRoughness", {}).get("baseColorFactor", [1, 1, 1, 1]))
+    return (1, 1, 1, 1)
+
+
+def pass_materials(meshes, tints=None, gltf=None):
+    """For every material slot: (slot, albedo material, data material)."""
+    made = {}
+    slots = []
+    for m in meshes:
+        for slot in m.material_slots:
+            mat = slot.material
+            if mat is None:
+                continue
+            if mat.name not in made:
+                cls = material_class(mat.name)
+                if mat.name == "ink":
+                    ink = lambda nt: _rgb(nt, T.lin(0x2A1E38))
+                    alb = _emission_mat("ink_alb", ink)
+                    dat = _emission_mat("ink_dat", lambda nt: _rgb(nt, (0.5, 0.5, 0.0, 1.0)))
+                    for x in (alb, dat):
+                        x.use_backface_culling = True
+                else:
+                    img = first_image(mat)
+                    low = mat.name.lower()
+                    tint = None
+                    for key, col in (tints or {}).items():
+                        if key.lower() in low:
+                            tint = col
+                    blend = getattr(mat, "blend_method", "OPAQUE")
+                    cut = img is not None and blend in ("BLEND", "HASHED", "CLIP")
+                    # face layers (lashes, brows, mouth, highlights) are blended over the skin
+                    blended = cut and cls == "unlit" and blend == "BLEND"
+                    holder = {}
+
+                    fac = gltf_factor(gltf or {}, mat.name)
+
+                    def color_fn(nt, img=img, tint=tint, holder=holder, fac=fac):
+                        out = base_color(nt, img, tint, holder)
+                        if max(abs(c - 1.0) for c in fac[:3]) > 1e-3:
+                            out = T._mix(nt, "MULTIPLY", 1.0, out, (fac[0], fac[1], fac[2], 1.0))
+                        return out
+
+                    def alpha_fn(nt, holder=holder, fac=fac):
+                        a = holder["t"].outputs["Alpha"]
+                        if fac[3] < 0.999:
+                            m = nt.nodes.new("ShaderNodeMath")
+                            m.operation = "MULTIPLY"
+                            nt.links.new(a, m.inputs[0])
+                            m.inputs[1].default_value = fac[3]
+                            a = m.outputs[0]
+                        return a
+
+                    def data_fn(nt, cls=cls, img=img, holder=holder):
+                        if img is not None:
+                            t = nt.nodes.new("ShaderNodeTexImage")
+                            t.image = img
+                            holder["t"] = t
+                        return _normal_socket(nt, cls)
+
+                    if "eyeextra" in low:
+                        # VRoid's special-expression eye overlay ("><", hearts): never wanted here
+                        alpha_fn = lambda nt, holder=None: _value(nt, 0.0)  # noqa: E731
+                        cut = True
+                    alb = _emission_mat(mat.name + "_alb", color_fn, alpha_fn if cut else None, blended)
+                    holder2 = {}
+                    dat = _emission_mat(mat.name + "_dat", lambda nt, f=data_fn, h=holder2: f(nt, holder=h),
+                                        (lambda nt, h=holder2, af=alpha_fn: af(nt, holder=h)) if cut else None, blended)
+                # keep the original's culling: VRoid hides layers (the "><" eye overlay, inner hair
+                # shells) behind back faces
+                for x in (alb, dat):
+                    if mat.name != "ink":
+                        x.use_backface_culling = mat.use_backface_culling
+                made[mat.name] = (alb, dat)
+            slots.append((slot, made[mat.name][0], made[mat.name][1]))
+    return slots
+
+
+def _value(nt, v):
+    n = nt.nodes.new("ShaderNodeValue")
+    n.outputs[0].default_value = v
+    return n.outputs[0]
+
+
+def _rgb(nt, col):
+    rgb = nt.nodes.new("ShaderNodeRGB")
+    rgb.outputs[0].default_value = col
+    return rgb.outputs[0]
+
+
+def base_color(nt, img, tint, holder):
+    """The texture color, recolored like toon_meshes does for tinted hair and clothes."""
+    if img is None:
+        return _rgb(nt, (0.85, 0.85, 0.85, 1))
+    t = nt.nodes.new("ShaderNodeTexImage")
+    t.image = img
+    holder["t"] = t
+    out = t.outputs["Color"]
+    if tint is not None:
+        bw = nt.nodes.new("ShaderNodeRGBToBW")
+        nt.links.new(out, bw.inputs[0])
+        ma = nt.nodes.new("ShaderNodeMath")
+        ma.operation = "MULTIPLY_ADD"
+        nt.links.new(bw.outputs[0], ma.inputs[0])
+        ma.inputs[1].default_value = 1.1
+        ma.inputs[2].default_value = 0.5
+        mul = nt.nodes.new("ShaderNodeVectorMath")
+        mul.operation = "SCALE"
+        mul.inputs[0].default_value = T.lin(tint)[:3]
+        nt.links.new(ma.outputs[0], mul.inputs[3])
+        out = mul.outputs[0]
+    return out
+
+
+def use_pass(sc, slots, which):
+    for slot, alb, dat in slots:
+        slot.material = alb if which == "albedo" else dat
+    # data is written as is (no view transform, no dither); albedo keeps the texture's sRGB
+    sc.view_settings.view_transform = "Raw" if which == "data" else "Standard"
+    m3 = sc.camera.matrix_world.to_3x3()
+    axes = (m3.col[0].normalized(), m3.col[1].normalized())
+    for i, sock in CAM_AXES:
+        sock.default_value = tuple(axes[i])
+    sc.render.dither_intensity = 0.0
+    sc.render.resolution_percentage = 50 if which == "data" else 100
+
+
+def passes():
+    os.makedirs(OUT, exist_ok=True)
+    for entry in HUMANS:
+        cid, src, tints, _role = entry[:4]
+        donor = entry[4] if len(entry) > 4 else None
+        if ONLY and cid not in ONLY:
+            continue
+        CAM_AXES.clear()  # the scene reset below frees the previous character's nodes
+        sc = T.eevee_scene(448, 960, transparent=True, samples=24)
+        sc.render.image_settings.file_format = "PNG"
+        sc.render.image_settings.color_mode = "RGBA"
+        sc.render.image_settings.compression = 100
+        arm, meshes, vrm, gltf = import_vrm(os.path.join(VRM_DIR, src + ".vrm"))
+        bones = bone_map(vrm, gltf)
+        if donor:
+            transplant_hair(arm, bones, meshes, donor)
+        outline(meshes)
+        slots = pass_materials(meshes, tints, gltf)
+        lo = Vector((1e9, 1e9, 1e9))
+        hi = Vector((-1e9, -1e9, -1e9))
+        for ex, (weights, pz) in EXPRS.items():
+            reset_pose(arm)
+            relax_hands(arm, bones, 0.6 if pz == "angry" else 0.0)
+            pose(arm, bones, pz)
+            a, b = posed_bounds(meshes)
+            lo = Vector((min(lo.x, a.x), min(lo.y, a.y), min(lo.z, a.z)))
+            hi = Vector((max(hi.x, b.x), max(hi.y, b.y), max(hi.z, b.z)))
+        full = frame_bounds(sc, lo, hi, 448, 960, front=1.0, yaw=14)
+        reset_pose(arm)
+        bust = frame_camera(sc, meshes, "bust", 640, 640, front=1.0, yaw=10)
+        exprs = [e for e in EXPRS if not EXPR_ONLY or e in EXPR_ONLY]
+        for ex in exprs:
+            weights, pz = EXPRS[ex]
+            reset_pose(arm)
+            relax_hands(arm, bones, 0.6 if pz == "angry" else 0.0)
+            pose(arm, bones, pz)
+            set_expression(vrm, gltf, meshes, weights)
+            for which, suffix in (("albedo", ""), ("data", "_n")):
+                use_pass(sc, slots, which)
+                sc.camera = full
+                sc.render.resolution_x, sc.render.resolution_y = 448, 960
+                render(sc, os.path.join(OUT, "%s_%s_full%s.png" % (cid, ex, suffix)))
+                sc.camera = bust
+                sc.render.resolution_x, sc.render.resolution_y = 640, 640
+                render(sc, os.path.join(OUT, "%s_%s_bust%s.png" % (cid, ex, suffix)))
+
+
+EXPR_ONLY = set(x[5:] for x in ONLY if x.startswith("expr:"))
+ONLY = set(x for x in ONLY if not x.startswith("expr:"))
+
+
 if MODE == "preview":
     preview()
 elif MODE in ("cast", "creatures"):
     cast()
+elif MODE == "passes":
+    passes()

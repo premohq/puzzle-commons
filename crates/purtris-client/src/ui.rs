@@ -238,10 +238,18 @@ pub fn title_case(s: &str) -> String {
         .join(" ")
 }
 
+/// A screen title spelled in the logo's letter tiles, with a line of help under it.
 pub fn title(cv: &mut Canvas, text: &str, sub: &str, l: &Look) {
-    let text = title_case(text);
-    cv.text_weight(62, 22, &text, 5, 0xFF00_0000, 110, Weight::Black);
-    cv.text_weight(60, 20, &text, 5, l.text, 255, Weight::Black);
+    let text = nice(text).to_uppercase();
+    // shrink long titles to stay clear of the clock in the corner
+    let mut size = 50;
+    let w = crate::blocks::width(&text, size);
+    if w > 1000 {
+        size = (size * 1000 / w).max(30);
+    }
+    // each title starts on its own color, so neighbouring screens don't all open in red
+    let color0 = text.bytes().fold(0usize, |a, b| a.wrapping_mul(31).wrapping_add(b as usize)) % 6;
+    crate::blocks::draw(cv, &text, 52, 14 + (50 - size) / 2, size, color0, None, 255);
     if !sub.is_empty() {
         cv.text_s(62, 76, sub, 2, l.dim);
     }

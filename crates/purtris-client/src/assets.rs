@@ -121,7 +121,8 @@ fn upsample(src: &Canvas, w: i32, h: i32) -> Canvas {
         let a = p >> 24;
         [((p >> 16) & 255) * a, ((p >> 8) & 255) * a, (p & 255) * a, a * 255]
     };
-    for y in 0..h {
+    let work = (w * h) as usize * 4;
+    crate::gfx::par_rows(&mut out.px, w as usize, 0, h, work, |y, row| {
         let gy = ((y as f32 + 0.5) * fy - 0.5).max(0.0);
         let y0 = (gy as i32).min(sh - 1);
         let y1 = (y0 + 1).min(sh - 1);
@@ -137,9 +138,9 @@ fn upsample(src: &Canvas, w: i32, h: i32) -> Canvas {
                 o[i] = (top / 256 * (256 - ty) + bot / 256 * ty) / 256;
             }
             let al = o[3] / 255;
-            out.px[(y * w + x as i32) as usize] = if al == 0 { 0 } else { (al.min(255) << 24) | ((o[0] / al).min(255) << 16) | ((o[1] / al).min(255) << 8) | (o[2] / al).min(255) };
+            row[x] = if al == 0 { 0 } else { (al.min(255) << 24) | ((o[0] / al).min(255) << 16) | ((o[1] / al).min(255) << 8) | (o[2] / al).min(255) };
         }
-    }
+    });
     out
 }
 
@@ -291,8 +292,8 @@ pub fn logo(cv: &mut Canvas, x: i32, y: i32, w: i32) {
 include!(concat!(env!("OUT_DIR"), "/cast_files.rs"));
 
 thread_local! {
-    /// decoded sprites, and sizes made from them, keyed by (file, pixel height)
-    static CAST_IMG: std::cell::RefCell<(HashMap<&'static str, Canvas>, HashMap<(String, i32, bool), Canvas>)> = std::cell::RefCell::new((HashMap::new(), HashMap::new()));
+    /// decoded sprites, and lit sizes made from them, keyed by (file, pixel height, mirrored, light rig)
+    static CAST_IMG: std::cell::RefCell<(HashMap<&'static str, Canvas>, HashMap<(&'static str, i32, bool, u64), Canvas>)> = std::cell::RefCell::new((HashMap::new(), HashMap::new()));
 }
 
 
@@ -324,32 +325,56 @@ fn cast_key(name: &str, expr: &str, bust: bool) -> Option<&'static str> {
     None
 }
 
+/// Whether a speaker has a body to draw (story voices, like a box or an intercom, do not).
+pub fn has_art(name: &str) -> bool {
+    cast_key(name, "normal", false).is_some()
+}
+
 /// Whether a cast id is one of the creatures (they have no separate bust framing).
 pub fn is_creature(name: &str) -> bool {
     !CAST_FILES.iter().any(|(n, _)| n.starts_with(name) && n.ends_with("_full"))
 }
 
 
+fn decoded(src: &mut HashMap<&'static str, Canvas>, key: &str) -> Option<&'static str> {
+    let (name, bytes) = CAST_FILES.iter().find(|(n, _)| *n == key)?;
+    if !src.contains_key(name) {
+        src.insert(name, crate::png::decode(bytes)?);
+    }
+    Some(name)
+}
+
+/// The sprite at pixel height `ph`, lit by the current light rig (light.rs) when it has a
+/// lighting map, mirrored if asked.
 fn with_cast<R>(key: &'static str, ph: i32, flip: bool, f: impl FnOnce(&Canvas) -> R) -> Option<R> {
+    let rig = crate::light::current();
     CAST_IMG.with(|c| {
         let mut c = c.borrow_mut();
         let (src, sized) = &mut *c;
-        if !src.contains_key(key) {
-            let bytes = CAST_FILES.iter().find(|(n, _)| *n == key)?.1;
-            src.insert(key, crate::png::decode(bytes)?);
-        }
-        let k = (key.to_string(), ph, flip);
+        decoded(src, key)?;
+        let k = (key, ph, flip, rig.id());
         if !sized.contains_key(&k) {
-            if sized.len() > 96 {
+            // big story sprites are ~10 MB each at 1440p: keep the cache bounded by size
+            let total: usize = sized.values().map(|c| c.px.len()).sum();
+            if sized.len() > 96 || total > 48_000_000 {
                 sized.clear();
             }
+            let data = decoded(src, &format!("{}_n", key));
             let s = &src[key];
+            let lit;
+            let s = match data {
+                Some(d) => {
+                    lit = crate::light::light(s, &src[d], &rig, flip);
+                    &lit
+                }
+                None => s,
+            };
             let w = (s.w * ph / s.h.max(1)).max(1);
             let mut img = resample(s, w, ph);
             if flip {
                 img = mirror_x(&img);
             }
-            sized.insert(k.clone(), img);
+            sized.insert(k, img);
         }
         Some(f(&sized[&k]))
     })
@@ -373,6 +398,13 @@ pub fn draw_char_ex(cv: &mut Canvas, name: &str, expr: &str, cx: i32, bottom: i3
         cv.ellipse(cx as f32, bottom as f32 - 4.0, img.w as f32 / k * 0.26, (h as f32 * 0.022).max(3.0), 0xFF00_0000, alpha / 3);
         cv.blit_px(img, cxp - img.w / 2, bp - img.h, alpha);
     });
+}
+
+/// Light and size a standing sprite now, so drawing it later costs nothing.
+pub fn prewarm_char(cv: &Canvas, name: &str, expr: &str, h: i32, flip: bool) {
+    let Some(key) = cast_key(name, expr, false) else { return };
+    let h = if is_creature(name) { h * 11 / 20 } else { h };
+    with_cast(key, cv.us(h), flip, |_| ());
 }
 
 /// Head-and-shoulders portrait `size` layout units square, top-left at (x, y).
