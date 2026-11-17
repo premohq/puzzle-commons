@@ -1,7 +1,9 @@
 """Render an anti-aliased glyph atlas (ASCII 32..126) for each UI weight, plus metrics.
-Fonts: Lato (SIL Open Font License 1.1, see assets/fonts/LICENSE-OFL.txt).
+Fonts: Lato (SIL Open Font License 1.1, see assets/fonts/LICENSE-OFL.txt) for body text,
+M PLUS Rounded 1c Black (SIL OFL 1.1, see assets/fonts/LICENSE-OFL-MPLUSRounded1c.txt) for
+display headings.
 
-  blender -b --factory-startup --python tools/blender/font_atlas.py -- <fonts dir> <out dir>
+  blender -b --factory-startup --python tools/blender/font_atlas.py -- <fonts dir> <out dir> [weight ...]
 """
 import bpy
 import os
@@ -14,7 +16,9 @@ CELL = 1.25
 PPU = 64
 BASE = 0.32
 COLS, ROWS = 16, 6
-WEIGHTS = [("regular", "Lato-Medium.ttf"), ("bold", "Lato-Bold.ttf"), ("black", "Lato-Black.ttf")]
+WEIGHTS = [("regular", "Lato-Medium.ttf"), ("bold", "Lato-Bold.ttf"), ("black", "Lato-Black.ttf"), ("display", "MPLUSRounded1c-Black.ttf")]
+if len(args) > 2:
+    WEIGHTS = [w for w in WEIGHTS if w[0] in args[2:]]
 
 
 def scene():

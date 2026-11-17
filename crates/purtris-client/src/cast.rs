@@ -113,6 +113,20 @@ pub fn hero() -> String {
 }
 
 /// A cast member's display name: the courier goes by whatever the player called her.
+/// The boss of each world, in world order (the rival of its last node).
+pub const BOSSES: [&str; 5] = ["nami", "hana", "yuki", "rin", "kaede"];
+
+/// The world whose boss `id` is.
+pub fn boss_world(id: &str) -> Option<usize> {
+    BOSSES.iter().position(|b| *b == id)
+}
+
+/// Bosses whose world is not beaten yet: outside their own scenes and matches they show
+/// only as a silhouette, named "???", and can't be picked.
+pub fn locked_bosses(p: &crate::save::Progress) -> Vec<&'static str> {
+    BOSSES.iter().enumerate().filter(|(w, _)| p.node(&format!("{}-5", w)) & 7 == 0).map(|(_, b)| *b).collect()
+}
+
 pub fn name_of(id: &str) -> String {
     if id == "mira" {
         hero()

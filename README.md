@@ -175,7 +175,11 @@ Then run the scripts in `tools/blender/` (`overworld.py`, `export_cast.py`, `fon
 
 The cast: put the VRoid CC0 sample avatars (sources in `third_party/vroid_cc0/LICENSE.txt`) as `.vrm` files in
 `third_party/vroid_cc0/vrm/`, then `blender -b --factory-startup --python tools/blender/cast3d.py -- <repo> cast`
-renders every character in eight expressions (full body and portrait) into `assets/cast/`.
+renders every character in eight expressions (full body and portrait) into `assets/cast/`. The calm expressions
+and the menu poses (`cast3d.py -- <repo> poses`, one signature pose per character, listed in `MENU_POSES`) are
+frames of Quaternius's Universal Animation Library 1 and 2 (Standard, CC0) retargeted onto the VRoid rig: unzip
+them into `third_party/quaternius_ual/x1` and `x2`. `font_atlas.py` also takes weight names (`display` for the
+M PLUS Rounded headings), and `tiles.py` renders the logo's letter tiles used for screen titles.
 
 ## Credits
 
@@ -185,6 +189,8 @@ All free licenses; the details are in each folder's license file.
   (`third_party/vroid_cc0/LICENSE.txt`), posed, recolored and toon-rendered for this game; eight more cast
   members are built from the same CC0 parts (hairstyles moved between models, new colors). Names, roles and
   story are this game's own.
+- **Poses:** Quaternius Universal Animation Library 1 and 2 (CC0, `third_party/quaternius_ual/LICENSE.txt`),
+  retargeted onto the cast.
 - **3D worlds:** Quaternius Stylized Nature MegaKit and Medieval Village MegaKit, Kenney Nature Kit, Poly Haven
   (all CC0).
 - **Fonts:** Lato, M PLUS Rounded 1c, Mochiy Pop One (SIL OFL 1.1, `assets/fonts/`).

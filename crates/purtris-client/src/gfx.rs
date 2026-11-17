@@ -675,6 +675,83 @@ impl Canvas {
             }
         }
     }
+    /// Filled convex polygon (layout units), any winding.
+    pub fn poly(&mut self, pts: &[(f32, f32)], c: u32, a: u32) {
+        let k = self.k;
+        let p: Vec<(f32, f32)> = pts.iter().map(|q| (q.0 * k, q.1 * k)).collect();
+        self.poly_px(&p, c, a);
+    }
+    /// Convex polygon by scanlines: exact horizontal coverage on four sub-rows per pixel row,
+    /// so one shape has no inner seams and the interior is a plain span fill.
+    pub fn poly_px(&mut self, p: &[(f32, f32)], c: u32, a: u32) {
+        let _p = crate::prof::scope("poly");
+        if p.len() < 3 || a == 0 {
+            return;
+        }
+        let miny = (p.iter().map(|q| q.1).fold(f32::MAX, f32::min).floor() as i32).max(self.clip.1);
+        let maxy = (p.iter().map(|q| q.1).fold(f32::MIN, f32::max).ceil() as i32).min(self.clip.3 - 1);
+        let span = |fy: f32| -> Option<(f32, f32)> {
+            let (mut lo, mut hi) = (f32::MAX, f32::MIN);
+            for i in 0..p.len() {
+                let (a0, b0) = (p[i], p[(i + 1) % p.len()]);
+                let (y0, y1) = (a0.1.min(b0.1), a0.1.max(b0.1));
+                if fy < y0 || fy >= y1 || y1 - y0 < 1e-6 {
+                    continue;
+                }
+                let x = a0.0 + (b0.0 - a0.0) * (fy - a0.1) / (b0.1 - a0.1);
+                lo = lo.min(x);
+                hi = hi.max(x);
+            }
+            if hi > lo {
+                Some((lo, hi))
+            } else {
+                None
+            }
+        };
+        for y in miny..=maxy {
+            let subs: [Option<(f32, f32)>; 4] = std::array::from_fn(|s| span(y as f32 + (s as f32 + 0.5) / 4.0));
+            let (mut x0, mut x1) = (f32::MAX, f32::MIN);
+            let (mut in0, mut in1) = (f32::MIN, f32::MAX);
+            let mut all = true;
+            for s in subs.iter() {
+                match s {
+                    Some((l, r)) => {
+                        x0 = x0.min(*l);
+                        x1 = x1.max(*r);
+                        in0 = in0.max(*l);
+                        in1 = in1.min(*r);
+                    }
+                    None => all = false,
+                }
+            }
+            if x1 < x0 {
+                continue;
+            }
+            // pixels fully covered on every sub-row
+            let (f0, f1) = if all { (in0.ceil() as i32, in1.floor() as i32) } else { (0, -1) };
+            let px0 = (x0.floor() as i32).max(self.clip.0);
+            let px1 = (x1.ceil() as i32).min(self.clip.2);
+            let mut x = px0;
+            while x < px1 {
+                if x >= f0 && x < f1 {
+                    let e = f1.min(px1);
+                    self.rect_a_px(x, y, e - x, 1, c, a);
+                    x = e;
+                    continue;
+                }
+                let (fx0, fx1) = (x as f32, x as f32 + 1.0);
+                let mut cov = 0.0;
+                for (l, r) in subs.iter().flatten() {
+                    cov += (r.min(fx1) - l.max(fx0)).max(0.0);
+                }
+                let cv = ((cov / 4.0) * a as f32).round() as u32;
+                if cv > 0 {
+                    self.blend(x, y, c, cv.min(255));
+                }
+                x += 1;
+            }
+        }
+    }
     pub fn star(&mut self, cx: f32, cy: f32, r: f32, c: u32, a: u32) {
         let mut pts = [(0.0f32, 0.0f32); 10];
         for (i, p) in pts.iter_mut().enumerate() {

@@ -140,19 +140,47 @@ pub fn bench(width: i32) {
 
 pub fn run(dir: &str, width: i32) {
     let _ = std::fs::create_dir_all(dir);
+    // one frame per screen: titles must already be standing, not dropping in
+    crate::ui::NO_TITLE_ANIM.store(true, std::sync::atomic::Ordering::Relaxed);
     let synth = Arc::new(Mutex::new(crate::audio::Synth::new()));
     let input = crate::input::Input::new(None);
     let mut app = App::new(input, synth, false);
     app.st = crate::save::Settings::default();
     app.st.benched = true;
+    // a named courier who has seen the opening scenes, so the story map draws at once
+    app.card.hero = "Mira".into();
+    for id in ["prologue", "w0_intro", "w1_intro", "w2_intro", "w3_intro", "w4_intro"] {
+        app.prog.records.insert(format!("scene.{}", id), 1);
+    }
     app.apply_settings();
     app.cv = crate::gfx::Canvas::screen(width);
     app.screen = Screen::Title;
     app.frame(None, 0.016);
     save(&app, dir, "01_title");
     app.screen = Screen::Main(ListState::default());
-    app.frame(None, 0.016);
+    for _ in 0..30 {
+        app.frame(None, 0.016);
+    }
     save(&app, dir, "02_menu");
+    // each section page, settled (tiles lifted, mascot slid in)
+    for (cat, name) in [(0, "02b_menu_story"), (2, "02c_menu_solo"), (6, "02d_menu_ranks"), (7, "02e_menu_settings")] {
+        app.xmb_cat = cat;
+        app.menu_open = true;
+        app.menu_t = 0.0;
+        app.screen = Screen::Main(ListState::default());
+        for _ in 0..40 {
+            app.frame(None, 0.016);
+        }
+        save(&app, dir, name);
+    }
+    app.menu_open = false;
+    app.xmb_cat = 1;
+    app.screen = Screen::Main(ListState::default());
+    for _ in 0..30 {
+        app.frame(None, 0.016);
+    }
+    save(&app, dir, "02f_menu_versus_sel");
+    app.xmb_cat = 0;
     app.screen = Screen::Story { world: 0, node: 0, diff: 1, chosen: 0, talk: true };
     app.frame(None, 0.016);
     save(&app, dir, "03_story");
@@ -190,9 +218,9 @@ pub fn run(dir: &str, width: i32) {
         ("15_help", Screen::Help(4)),
         ("16_controls", Screen::Controls(ListState::default(), 1, None)),
         ("17_story_w5", Screen::Story { world: 4, node: 3, diff: 2, chosen: 2, talk: true }),
-        ("18_training", Screen::Training(ListState::default())),
+        ("18_training", Screen::Training),
         ("19_seeds", Screen::Seeds(ListState::default(), 0xC0FFEE, String::new())),
-        ("20_solo", Screen::Solo(ListState::default())),
+        ("20_solo", Screen::Solo),
     ];
     for (n, sc) in screens {
         app.screen = sc;

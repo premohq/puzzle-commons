@@ -1,5 +1,7 @@
 //! Text: anti-aliased glyph atlases rendered in Blender from Lato (SIL OFL 1.1, see
-//! assets/fonts/LICENSE-OFL.txt). Glyphs are cut from the atlas and resampled per size, cached.
+//! assets/fonts/LICENSE-OFL.txt) for body text and M PLUS Rounded 1c Black (SIL OFL 1.1, see
+//! assets/fonts/LICENSE-OFL-MPLUSRounded1c.txt) for display headings. Glyphs are cut from the
+//! atlas and resampled per size, cached.
 //! A small vector icon set (arrows, star, dots, heart, play) is drawn as shapes.
 
 use crate::gfx::Canvas;
@@ -11,12 +13,15 @@ pub enum Weight {
     Regular,
     Bold,
     Black,
+    /// Rounded display face for headings, tiles and banners.
+    Display,
 }
 
-const ATLAS: [(&[u8], &str); 3] = [
+const ATLAS: [(&[u8], &str); 4] = [
     (include_bytes!("../../../assets/sprites/font_regular.tga"), include_str!("../../../assets/sprites/font_regular.txt")),
     (include_bytes!("../../../assets/sprites/font_bold.tga"), include_str!("../../../assets/sprites/font_bold.txt")),
     (include_bytes!("../../../assets/sprites/font_black.tga"), include_str!("../../../assets/sprites/font_black.txt")),
+    (include_bytes!("../../../assets/sprites/font_display.tga"), include_str!("../../../assets/sprites/font_display.txt")),
 ];
 const CELL: i32 = 80; // 1.25 em at 64 px per em
 const PPU: f32 = 64.0;
@@ -70,6 +75,7 @@ fn wi(w: Weight) -> usize {
         Weight::Regular => 0,
         Weight::Bold => 1,
         Weight::Black => 2,
+        Weight::Display => 3,
     }
 }
 

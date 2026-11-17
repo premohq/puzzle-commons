@@ -93,6 +93,14 @@ impl App {
                     ci = (ci + 1) % n;
                     self.sfx(Sfx::Menu);
                 }
+                // bosses you haven't beaten can't be picked: step past them the way you were going
+                let step = if nav.left { n - 1 } else { 1 };
+                for _ in 0..n {
+                    if !crate::assets::is_hidden(CAST[ci].id) {
+                        break;
+                    }
+                    ci = (ci + step) % n;
+                }
                 self.card.character = CAST[ci].id.to_string();
                 let m = &CAST[ci];
                 self.cv.glass(420, 236, 760, 420, 28, GLASS, GLASS_A);
@@ -268,13 +276,13 @@ impl App {
             crate::assets::draw_portrait(&mut self.cv, rid, "smug", x + 168, y + 70, 72, 255, false);
             let name = crate::content::WORLDS[w].name;
             self.cv.text_weight(x + 6, y + 141, &format!("{}  {}", w + 1, name), 1, l.text, 255, Weight::Bold);
-            self.cv.text_s(x + 170, y + 141, rname, 1, l.accent);
+            self.cv.text_s(x + 170, y + 141, if crate::assets::is_hidden(rid) { "???" } else { rname }, 1, l.accent);
         }
     }
 
     fn diagram_versus(&mut self) {
         let l = look(self.st.theme);
-        let ids = ["mira", "kai", "nami", "rin", "sora", "emi"];
+        let ids = ["mira", "kai", "luna", "taro", "sora", "emi"];
         let devs = ["Keyboard left", "Keyboard right", "Gamepad 1", "Gamepad 2", "Gamepad 3", "CPU"];
         for k in 0..6 {
             let x = 424 + k as i32 * 136;

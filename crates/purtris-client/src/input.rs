@@ -651,6 +651,9 @@ pub struct Nav {
     pub pause: bool,
     pub click: bool,
     pub mouse: Option<(i32, i32)>,
+    /// the pointer moved this frame: only then may hovering change a selection, so a mouse
+    /// resting over the window never fights the arrow keys
+    pub moved: bool,
     pub wheel: i32,
 }
 
@@ -669,6 +672,7 @@ pub struct Input {
     nav_held: [f32; 4],
     pub typed: std::sync::Arc<std::sync::Mutex<Vec<char>>>,
     mouse_prev: bool,
+    mouse_last: Option<(i32, i32)>,
     pub last_device: Option<Device>,
     /// (offset x, offset y, scale) from window pixels to the 1280x720 canvas
     pub mouse_map: (f32, f32, f32),
@@ -705,6 +709,7 @@ impl Input {
             nav_held: [0.0; 4],
             typed,
             mouse_prev: false,
+            mouse_last: None,
             last_device: None,
             mouse_map: (0.0, 0.0, 1.0),
         }
@@ -889,6 +894,11 @@ impl Input {
         if let Some((mx, my)) = win.get_mouse_pos(minifb::MouseMode::Discard) {
             let (ox, oy, sc) = self.mouse_map;
             n.mouse = Some((((mx - ox) / sc) as i32, ((my - oy) / sc) as i32));
+        }
+        // the first position seen is not a move (the pointer may just be resting there)
+        n.moved = self.mouse_last.is_some() && n.mouse.is_some() && n.mouse != self.mouse_last;
+        if n.mouse.is_some() {
+            self.mouse_last = n.mouse;
         }
         let down = win.get_mouse_down(minifb::MouseButton::Left);
         n.click = down && !self.mouse_prev;

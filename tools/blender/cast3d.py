@@ -6,6 +6,8 @@ sprites for the game.
 
 modes: preview   one neutral full-body render per source model -> third_party/.../preview
        cast      every cast member x expression -> assets/cast/<id>_<expr>.tga + assets/cast/cast.txt
+       poses     menu poses (MENU_POSES) -> assets/cast/<id>_p-<pose>_full.png
+       posetest  a quick contact sheet of POSE_CANDIDATES on one model -> target/posework/
 """
 import bpy
 import json
@@ -14,7 +16,7 @@ import os
 import shutil
 import struct
 import sys
-from mathutils import Matrix, Vector
+from mathutils import Matrix, Quaternion, Vector
 
 ARGS = sys.argv[sys.argv.index("--") + 1:]
 ROOT = ARGS[0]
@@ -488,13 +490,15 @@ CREATURES_ALL = [
 ]
 CREATURES = CREATURES_ALL if MODE == "creatures" else []
 # expression: (VRM blend shape weights, pose)
+# A pose is a name in POSES (authored by hand) or (library, action, frame) from the Universal
+# Animation Library, retargeted (see Retarget below): the calm expressions stand naturally.
 EXPRS = {
-    "normal": ({"neutral": 1.0}, "stand"),
-    "smile": ({"fun": 1.0}, "stand"),
+    "normal": ({"neutral": 1.0}, (1, "Idle_Talking_Loop", 30)),
+    "smile": ({"fun": 1.0}, (1, "Idle_Loop", 0)),
     "delighted": ({"joy": 1.0}, "cheer"),
     "angry": ({"angry": 1.0}, "angry"),
     "sad": ({"sorrow": 1.0}, "sad"),
-    "shocked": ({"o": 1.0, "sorrow": 0.25}, "stand"),
+    "shocked": ({"o": 1.0, "sorrow": 0.25}, (1, "Idle_Loop", 30)),
     "smug": ({"fun": 0.55, "blink_l": 0.85}, "think"),
     "sleepy": ({"blink": 0.72, "neutral": 0.5}, "sad"),
 }
@@ -528,14 +532,27 @@ def cast():
             transplant_hair(arm, bones, meshes, donor)
         toon_meshes(meshes, tints=tints)
         outline(meshes)
+        libs = {}
+
+        def put_pose(pz):
+            reset_pose(arm)
+            if isinstance(pz, tuple):
+                if pz[0] not in libs:
+                    src_arm, acts = import_ual(pz[0])
+                    libs[pz[0]] = (Retarget(arm, bones, pz[0], src_arm, acts), acts)
+                r, acts = libs[pz[0]]
+                r.apply(acts[pz[1]], pz[2])
+            else:
+                relax_hands(arm, bones, 0.6 if pz == "angry" else 0.0)
+                pose(arm, bones, pz)
+
+        only_ex = set(filter(None, os.environ.get("EXPR_ONLY", "").split(",")))
         # one framing for all eight poses (so sizes match between expressions), measured on
         # the posed meshes so raised hands stay inside the picture
         lo = Vector((1e9, 1e9, 1e9))
         hi = Vector((-1e9, -1e9, -1e9))
         for ex, (weights, pz) in EXPRS.items():
-            reset_pose(arm)
-            relax_hands(arm, bones, 0.6 if pz == "angry" else 0.0)
-            pose(arm, bones, pz)
+            put_pose(pz)
             a, b = posed_bounds(meshes)
             lo = Vector((min(lo.x, a.x), min(lo.y, a.y), min(lo.z, a.z)))
             hi = Vector((max(hi.x, b.x), max(hi.y, b.y), max(hi.z, b.z)))
@@ -543,9 +560,9 @@ def cast():
         reset_pose(arm)
         bust = frame_camera(sc, meshes, "bust", 640, 640, front=1.0, yaw=10)
         for ex, (weights, pz) in EXPRS.items():
-            reset_pose(arm)
-            relax_hands(arm, bones, 0.6 if pz == "angry" else 0.0)
-            pose(arm, bones, pz)
+            if only_ex and ex not in only_ex:
+                continue
+            put_pose(pz)
             set_expression(vrm, gltf, meshes, weights)
             sc.camera = full
             sc.render.resolution_x, sc.render.resolution_y = 448, 960
@@ -857,9 +874,296 @@ EXPR_ONLY = set(x[5:] for x in ONLY if x.startswith("expr:"))
 ONLY = set(x for x in ONLY if not x.startswith("expr:"))
 
 
+# ------------------------------------------------------------------ menu poses
+# Natural poses for the menus: one frame of a real animation from Quaternius's Universal
+# Animation Library (CC0, third_party/quaternius_ual), copied bone by bone onto the VRoid rig.
+# Each bone gets the same world-space turn away from its T-pose as the source bone, so rigs
+# with different bone rolls and proportions still match.
+UAL_DIR = os.path.join(ROOT, "third_party", "quaternius_ual")
+UAL = {
+    1: os.path.join(UAL_DIR, "x1", "Animation Library[Standard]", "Godot", "AnimationLibrary_Godot_Standard.glb"),
+    2: os.path.join(UAL_DIR, "x2", "Universal Animation Library 2 [Standard]", "Unreal-Godot", "UAL2_Standard.glb"),
+}
+
+
+def ual_map(lib):
+    """VRM humanoid bone -> UAL bone name."""
+    m = {}
+    if lib == 1:
+        m.update({"hips": "DEF-hips", "spine": "DEF-spine.001", "chest": "DEF-spine.002", "upperChest": "DEF-spine.003", "neck": "DEF-neck", "head": "DEF-head"})
+        for side, s in (("left", "L"), ("right", "R")):
+            for hb, b in (("Shoulder", "shoulder"), ("UpperArm", "upper_arm"), ("LowerArm", "forearm"), ("Hand", "hand"), ("UpperLeg", "thigh"), ("LowerLeg", "shin"), ("Foot", "foot"), ("Toes", "toe")):
+                m[side + hb] = "DEF-%s.%s" % (b, s)
+            for f, g in (("Index", "f_index"), ("Middle", "f_middle"), ("Ring", "f_ring"), ("Little", "f_pinky"), ("Thumb", "thumb")):
+                for i, seg in enumerate(("Proximal", "Intermediate", "Distal")):
+                    m[side + f + seg] = "DEF-%s.%02d.%s" % (g, i + 1, s)
+    else:
+        m.update({"hips": "pelvis", "spine": "spine_01", "chest": "spine_02", "upperChest": "spine_03", "neck": "neck_01", "head": "Head"})
+        for side, s in (("left", "l"), ("right", "r")):
+            for hb, b in (("Shoulder", "clavicle"), ("UpperArm", "upperarm"), ("LowerArm", "lowerarm"), ("Hand", "hand"), ("UpperLeg", "thigh"), ("LowerLeg", "calf"), ("Foot", "foot"), ("Toes", "ball")):
+                m[side + hb] = "%s_%s" % (b, s)
+            for f, g in (("Index", "index"), ("Middle", "middle"), ("Ring", "ring"), ("Little", "pinky"), ("Thumb", "thumb")):
+                for i, seg in enumerate(("Proximal", "Intermediate", "Distal")):
+                    m[side + f + seg] = "%s_%02d_%s" % (g, i + 1, s)
+    return m
+
+
+def import_ual(lib):
+    """Import one animation library, hidden from renders. Returns (armature, {action name: action})."""
+    before_o, before_a = set(bpy.data.objects), set(bpy.data.actions)
+    bpy.ops.import_scene.gltf(filepath=UAL[lib])
+    objs = [o for o in bpy.data.objects if o not in before_o]
+    for o in objs:
+        o.hide_render = True
+    arm = next(o for o in objs if o.type == "ARMATURE")
+    acts = {}
+    for a in bpy.data.actions:
+        if a not in before_a:
+            name = a.name
+            if len(name) > 4 and name[-4] == "." and name[-3:].isdigit():
+                name = name[:-4]
+            acts[name] = a
+    if arm.animation_data is None:
+        arm.animation_data_create()
+    for t in list(arm.animation_data.nla_tracks):
+        arm.animation_data.nla_tracks.remove(t)
+    return arm, acts
+
+
+def ual_frame(arm, act, frame):
+    arm.animation_data.action = act
+    try:
+        slots = getattr(act, "slots", None)
+        if slots:
+            arm.animation_data.action_slot = slots[0]
+    except Exception:
+        pass
+    bpy.context.scene.frame_set(int(frame))
+    bpy.context.view_layer.update()
+
+
+def world_q(arm, pb):
+    return (arm.matrix_world @ pb.matrix).to_quaternion()
+
+
+def world_head(arm, pb):
+    return arm.matrix_world @ pb.head
+
+
+def facing(arm, lname, rname):
+    """Horizontal direction the character faces: its left-to-right shoulder line crossed with up."""
+    v = world_head(arm, arm.pose.bones[lname]) - world_head(arm, arm.pose.bones[rname])
+    v.z = 0
+    v.normalize()
+    return v.cross(Vector((0, 0, 1)))
+
+
+def depth(pb):
+    d = 0
+    while pb.parent is not None:
+        d += 1
+        pb = pb.parent
+    return d
+
+
+class Retarget:
+    """Copies UAL frames onto one VRM armature. The source's T-pose action is its reference."""
+
+    def __init__(self, tgt, bones, lib, src, acts):
+        self.tgt, self.bones, self.src = tgt, bones, src
+        smap = ual_map(lib)
+        self.map = {hb: smap[hb] for hb in bones if hb in smap and smap[hb] in src.pose.bones and bones[hb] in tgt.pose.bones}
+        # the reference must be a true T-pose (arms level): library 1's T-pose action is one,
+        # library 2's is an A-pose, so take whichever of it and the rest pose has level arms
+        def arm_tilt():
+            pb = src.pose.bones[self.map["leftUpperArm"]]
+            d = (src.matrix_world @ pb.tail) - (src.matrix_world @ pb.head)
+            return abs(d.normalized().z)
+
+        ual_frame(src, acts["A_TPose"], 0)
+        tilt_action = arm_tilt()
+        src.animation_data.action = None
+        reset_pose(src)
+        tilt_rest = arm_tilt()
+        if tilt_action < tilt_rest:
+            ual_frame(src, acts["A_TPose"], 0)
+        print("retarget lib %d reference: %s (arm tilt %.2f vs rest %.2f)" % (lib, "T-pose action" if tilt_action < tilt_rest else "rest", tilt_action, tilt_rest))
+        self.src_ref = {hb: world_q(src, src.pose.bones[n]) for hb, n in self.map.items()}
+        self.src_hips = world_head(src, src.pose.bones[self.map["hips"]])
+        reset_pose(tgt)
+        self.tgt_rest = {hb: world_q(tgt, tgt.pose.bones[bones[hb]]) for hb in self.map}
+        self.tgt_hips = world_head(tgt, tgt.pose.bones[bones["hips"]])
+        fs = facing(src, self.map["leftUpperArm"], self.map["rightUpperArm"])
+        ft = facing(tgt, bones["leftUpperArm"], bones["rightUpperArm"])
+        # a turn about the vertical only (rotation_difference picks an arbitrary axis when the
+        # two facings are exactly opposite, which they usually are)
+        self.q = Quaternion((0.0, 0.0, 1.0), math.atan2(fs.cross(ft).z, fs.dot(ft)))
+        print("retarget facing src %s tgt %s turn %.1f deg; arm obj rot %s scale %s" % (tuple(round(v, 2) for v in fs), tuple(round(v, 2) for v in ft), math.degrees(self.q.angle), tuple(round(math.degrees(v), 1) for v in tgt.matrix_world.to_euler()), tuple(round(v, 3) for v in tgt.matrix_world.to_scale())))
+
+        def leg(arm, a, b):
+            return (world_head(arm, arm.pose.bones[a]) - world_head(arm, arm.pose.bones[b])).length
+
+        self.hip_k = leg(tgt, bones["leftUpperLeg"], bones["leftFoot"]) / max(1e-6, leg(src, self.map["leftUpperLeg"], self.map["leftFoot"]))
+        self.order = sorted(self.map, key=lambda hb: depth(tgt.pose.bones[bones[hb]]))
+
+    def apply(self, act, frame):
+        src, tgt = self.src, self.tgt
+        ual_frame(src, act, frame)
+        now = {hb: world_q(src, src.pose.bones[n]) for hb, n in self.map.items()}
+        hips_now = world_head(src, src.pose.bones[self.map["hips"]])
+        reset_pose(tgt)
+        qi = self.q.inverted()
+        for hb in self.order:
+            d = now[hb] @ self.src_ref[hb].inverted()
+            want = self.q @ d @ qi @ self.tgt_rest[hb]
+            pb = tgt.pose.bones[self.bones[hb]]
+            cur = tgt.matrix_world @ pb.matrix
+            loc = cur.translation.copy()
+            if hb == "hips":
+                loc = self.tgt_hips + self.q @ ((hips_now - self.src_hips) * self.hip_k)
+            m = Matrix.Translation(loc) @ want.to_matrix().to_4x4() @ Matrix.Diagonal(cur.to_scale().to_4d())
+            pb.matrix = tgt.matrix_world.inverted() @ m
+            bpy.context.view_layer.update()
+
+
+# Candidates for choosing frames: (lib, action, frames)
+POSE_CANDIDATES = [
+    (1, "Idle_Loop", (0,)),
+    (1, "Idle_Talking_Loop", (30, 60)),
+    (1, "Interact", (30,)),
+    (1, "Jog_Fwd_Loop", (15,)),
+    (1, "Spell_Simple_Shoot", (4,)),
+    (1, "Spell_Simple_Enter", (8,)),
+    (1, "Punch_Cross", (8,)),
+    (1, "Punch_Enter", (16,)),
+    (1, "Sword_Idle", (20,)),
+    (1, "Pistol_Idle_Loop", (20,)),
+    (1, "Walk_Formal_Loop", (8,)),
+    (1, "Jump_Land", (20,)),
+    (2, "Idle_FoldArms_Loop", (10,)),
+    (2, "Yes", (20,)),
+    (2, "Idle_Rail_Call", (30,)),
+    (2, "Idle_TalkingPhone_Loop", (30,)),
+    (2, "NinjaJump_Idle_Loop", (10, 30)),
+    (2, "OverhandThrow", (12,)),
+    (2, "Chest_Open", (20,)),
+    (2, "Idle_No_Loop", (20,)),
+    (2, "Consume", (16,)),
+    (2, "Farm_Watering", (40,)),
+]
+
+# Menu poses: id -> [(pose name, lib, action, frame, expression, camera yaw)]. Frames that
+# lift a skirt (jumps, crouches, sitting, high knees) are left out on purpose.
+_COURIER = [
+    ("present", 1, "Spell_Simple_Shoot", 4, "smile", 14),
+    ("talk", 1, "Idle_Talking_Loop", 30, "smile", 14),
+]
+MENU_POSES = {
+    "mira": _COURIER,
+    "hero_m": _COURIER,
+    "kai": [("run", 1, "Jog_Fwd_Loop", 15, "delighted", 30), ("thumb", 2, "Yes", 20, "delighted", 14)],
+    "kaede": [("fight", 1, "Punch_Cross", 8, "smug", 20)],
+    "sora": [("thumb", 2, "Yes", 20, "delighted", 14)],
+    "toma": [("look", 2, "Idle_Rail_Call", 30, "normal", 14)],
+    "jun": [("arms", 2, "Idle_FoldArms_Loop", 10, "smug", 14)],
+    "yuki": [("tinker", 1, "Interact", 30, "smile", 14)],
+}
+# Every rival's signature pose for the story (the map's rival card, character select):
+# chosen for who they are.
+RIVAL_POSES = {
+    "kai": (1, "Punch_Cross", 8, "smug"),            # sparring partner, fists up
+    "nami": (1, "Spell_Simple_Shoot", 4, "smug"),    # points the challenge at you
+    "hana": (2, "Yes", 20, "delighted"),             # cheerful thumbs up
+    "yuki": (1, "Spell_Simple_Idle_Loop", 20, "smug"),
+    "rin": (2, "Idle_TalkingPhone_Loop", 30, "smug"),  # always on a deal
+    "kaede": (2, "Idle_FoldArms_Loop", 10, "smug"),  # the queen, unimpressed
+    "sora": (1, "Spell_Simple_Shoot", 4, "delighted"),
+    "ren": (2, "Idle_FoldArms_Loop", 40, "normal"),
+    "taro": (2, "Consume", 16, "smile"),             # a snack from the night train
+    "emi": (1, "Punch_Cross", 8, "delighted"),
+    "aoi": (2, "Yes", 20, "smile"),
+    "haru": (2, "Idle_Rail_Call", 30, "smile"),      # looking out over the water
+    "mei": (1, "Spell_Simple_Idle_Loop", 20, "smug"),
+    "toma": (2, "Idle_FoldArms_Loop", 10, "normal"),
+    "luna": (1, "Spell_Simple_Shoot", 4, "smug"),    # Mira's loud rival, pointing
+    "kiko": (1, "Idle_Talking_Loop", 50, "delighted"),
+    "jun": (1, "Punch_Enter", 16, "smug"),           # guard up, champion
+    "saki": (1, "Sword_Idle", 20, "smug"),
+}
+for _cid, (_lib, _act, _f, _ex) in RIVAL_POSES.items():
+    MENU_POSES.setdefault(_cid, []).append(("rival", _lib, _act, _f, _ex, 20))
+
+
+def cast_model(cid):
+    """Import and shade one cast member; returns (arm, meshes, vrm, gltf, bones)."""
+    entry = next(e for e in HUMANS if e[0] == cid)
+    src, tints = entry[1], entry[2]
+    donor = entry[4] if len(entry) > 4 else None
+    arm, meshes, vrm, gltf = import_vrm(os.path.join(VRM_DIR, src + ".vrm"))
+    bones = bone_map(vrm, gltf)
+    if donor:
+        transplant_hair(arm, bones, meshes, donor)
+    toon_meshes(meshes, tints=tints)
+    outline(meshes)
+    return arm, meshes, vrm, gltf, bones
+
+
+def render_pose(sc, meshes, path, w, h, yaw):
+    lo, hi = posed_bounds(meshes)
+    sc.camera = frame_bounds(sc, lo, hi, w, h, front=1.0, yaw=yaw)
+    sc.render.resolution_x, sc.render.resolution_y = w, h
+    render(sc, path)
+
+
+def poses(test):
+    out = os.path.join(ROOT, "target", "posework") if test else OUT
+    os.makedirs(out, exist_ok=True)
+    ids = sorted(ONLY) if ONLY else sorted(MENU_POSES)
+    for cid in ids:
+        w, h = (320, 480) if test else (720, 960)
+        sc = T.eevee_scene(w, h, transparent=True, samples=8 if test else 48)
+        sc.render.image_settings.file_format = "PNG"
+        sc.render.image_settings.color_mode = "RGBA"
+        sc.render.image_settings.compression = 90
+        lights(sc)
+        arm, meshes, vrm, gltf, bones = cast_model(cid)
+        libs = {}
+
+        def rt(lib):
+            if lib not in libs:
+                src, acts = import_ual(lib)
+                libs[lib] = (Retarget(arm, bones, lib, src, acts), acts)
+            return libs[lib]
+
+        if test:
+            only_acts = set(filter(None, os.environ.get("POSE_ONLY", "").split(",")))
+            for lib, act, frames in POSE_CANDIDATES:
+                if only_acts and act not in only_acts:
+                    continue
+                r, acts = rt(lib)
+                if act not in acts:
+                    print("missing action", act)
+                    continue
+                for f in frames:
+                    r.apply(acts[act], f)
+                    set_expression(vrm, gltf, meshes, {"fun": 1.0})
+                    render_pose(sc, meshes, os.path.join(out, "%s__%d_%s_%03d.png" % (cid, lib, act, f)), w, h, 14)
+        else:
+            only_poses = set(filter(None, os.environ.get("POSE_NAMES", "").split(",")))
+            for name, lib, act, f, expr, yaw in MENU_POSES[cid]:
+                if only_poses and name not in only_poses:
+                    continue
+                r, acts = rt(lib)
+                r.apply(acts[act], f)
+                set_expression(vrm, gltf, meshes, EXPRS[expr][0])
+                render_pose(sc, meshes, os.path.join(out, "%s_p-%s_full.png" % (cid, name)), w, h, yaw)
+
+
 if MODE == "preview":
     preview()
 elif MODE in ("cast", "creatures"):
     cast()
 elif MODE == "passes":
     passes()
+elif MODE in ("poses", "posetest"):
+    poses(MODE == "posetest")
