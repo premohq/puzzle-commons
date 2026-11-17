@@ -275,6 +275,8 @@ pub struct App {
     scaled_maps: std::collections::HashMap<(usize, i32), (Canvas, std::sync::Arc<crate::gfx::Backdrop>)>,
     /// blurred and dimmed, keyed (world, width, dim)
     blurred_maps: std::collections::HashMap<(usize, i32, u32), (Canvas, std::sync::Arc<crate::gfx::Backdrop>)>,
+    /// the match backdrop with each board's stage baked in, keyed by world, size and layout
+    arena: Option<(String, Canvas, std::sync::Arc<crate::gfx::Backdrop>)>,
     title_zoom: std::collections::HashMap<(usize, i32), (Canvas, std::sync::Arc<crate::gfx::Backdrop>)>,
     vignette: (i32, Vec<u8>),
     /// screen transitions on (off for headless shots)
@@ -334,6 +336,7 @@ impl App {
             boot_draw: 0.0,
             scaled_maps: std::collections::HashMap::new(),
             blurred_maps: std::collections::HashMap::new(),
+            arena: None,
             title_zoom: std::collections::HashMap::new(),
             vignette: (0, Vec::new()),
             transitions: true,
@@ -482,6 +485,31 @@ impl App {
             let t = self.t;
             self.r.scene.draw(&mut self.cv, &self.st, t, 0.0);
         }
+    }
+    /// The match backdrop: the blurred world with every board's stage (spotlight, floor, station
+    /// panel) painted in once per layout, so the frame only pays for one copy.
+    fn match_bg(&mut self, m: &purtris_sim::Match, humans: &[bool; 6], area: (i32, i32, i32, i32)) {
+        if self.st.theme != ThemeId::Voyage || self.st.preset == Preset::Potato || self.maps.is_empty() {
+            self.bg_blur(70);
+            return;
+        }
+        let geoms = crate::render::layout(m, humans, area);
+        let shape: Vec<(i32, i32, i32, i32, String)> = (0..6)
+            .filter(|&i| m.seats[i].board.is_some())
+            .map(|i| (geoms[i].fx, geoms[i].fy, geoms[i].cell, geoms[i].cols, format!("{:?}", m.seats[i].cfg.profile.style())))
+            .collect();
+        let key = format!("{} {} {:?}", self.bg_world % self.maps.len(), self.cv.w, shape);
+        if self.arena.as_ref().map(|a| a.0 != key).unwrap_or(true) {
+            self.bg_blur(70);
+            let mut a = self.cv.clone();
+            a.reset_clip();
+            crate::render::paint_arena(&mut a, m, &geoms);
+            let bd = crate::gfx::Backdrop::from_image(&a);
+            self.arena = Some((key, a, bd));
+        }
+        let (_, a, bd) = self.arena.as_ref().unwrap();
+        self.cv.copy_from(a);
+        self.cv.set_backdrop(bd.clone());
     }
     /// Draw world `wi`'s rendered map over the whole screen (cached at the screen size).
     fn draw_map(&mut self, wi: usize) {
@@ -977,6 +1005,12 @@ impl App {
         // node card, kept to the bottom band the maps leave clear
         let n = &w.nodes[node];
         let open = unlocked(&self.prog, world, node);
+        // the world's rival stands behind the card, never in front of its text
+        if self.st.characters {
+            let (rid, _) = crate::assets::rival(world);
+            let expr = if n.level.boss { "angry" } else { "smug" };
+            crate::assets::draw_char(&mut self.cv, rid, expr, 1150, 690, 340, 255);
+        }
         self.cv.glass(40, 532, 1200, 160, 26, ui::GLASS, ui::GLASS_A);
         self.cv.text_weight(70, 548, &format!("{}.  {}", node + 1, n.name), 3, 0xFFFF_FFFF, 255, Weight::Black);
         let kind = match (n.level.mode, n.level.foes.len(), n.level.allies.len()) {
@@ -988,12 +1022,10 @@ impl App {
         };
         let (rid, rname) = crate::assets::rival(world);
         if self.st.characters {
-            let expr = if n.level.boss { "angry" } else { "smug" };
-            crate::assets::draw_char(&mut self.cv, rid, expr, 1150, 690, 340, 255);
             let tag = format!("Rival: {}", rname);
             let tw = Canvas::text_wb(&tag, 1, Weight::Bold) + 24;
-            self.cv.glass(1150 - tw / 2, 664, tw, 24, 12, ui::GLASS, 210);
-            self.cv.text_weight(1150 - tw / 2 + 12, 669, &tag, 1, 0xFFFF_FFFF, 255, Weight::Bold);
+            self.cv.round_rect(1150 - tw / 2, 548, tw, 24, 12, 0xFF05_0814, 200);
+            self.cv.text_weight(1150 - tw / 2 + 12, 553, &tag, 1, 0xFFFF_FFFF, 255, Weight::Bold);
         }
         let kw = Canvas::text_w(&kind, 2);
         self.cv.text_s(1040 - kw, 554, &kind, 2, l.accent);
@@ -1847,9 +1879,6 @@ impl App {
         }
         let _pd = crate::prof::scope("draw");
         // draw
-        let energy = self.r.fx.energy;
-        let _ = energy;
-        self.bg_blur(70);
         let shake = if self.st.shake && !self.st.reduce_motion { self.r.fx.shake } else { 0.0 };
         let sx = (shake * ((self.t * 50.0).sin())) as i32;
         let ah = if g.training { 634 } else { 668 };
@@ -1865,6 +1894,13 @@ impl App {
             (205 + sx, 44, 870, ah)
         } else {
             (215 + sx, 44, 850, ah)
+        };
+        self.match_bg(&g.m, &g.humans, (area.0 - sx, area.1, area.2, area.3));
+        // the boards' outer edges (with their cards), so the characters can stand clear of them
+        let edges = {
+            let gs = crate::render::layout(&g.m, &g.humans, (area.0 - sx, area.1, area.2, area.3));
+            let on: Vec<&crate::render::Geom> = gs.iter().filter(|q| q.cell > 0).collect();
+            (on.iter().map(|q| q.x).min().unwrap_or(area.0), on.iter().map(|q| q.x + q.w).max().unwrap_or(area.0 + area.2))
         };
         if flank {
             let shown: Vec<usize> = if crowd { vec![active[0], *active.iter().find(|&&i| !g.humans[i]).unwrap_or(&active[1])] } else { active.clone() };
@@ -1885,10 +1921,15 @@ impl App {
                 } else {
                     "smile"
                 };
-                let right = k == 1 || (active.len() == 1 && false);
-                let cx = if right { if crowd { 1180 } else { 1150 } } else if crowd { 100 } else { 130 };
+                let right = k == 1;
+                // stand in the space beside the boards, never in front of their cards: the
+                // figure is about 0.44 of its height wide
+                let room = if right { 1280 - edges.1 } else { edges.0 } - 8;
+                let ch = (((room + 12) as f32 / 0.44) as i32).min(if crowd { 520 } else { 600 }).max(260);
+                let half = (ch as f32 * 0.22) as i32;
+                let cx = if right { edges.1 + 8 + room - half - 6 } else { room - half - 6 }.clamp(half - 12, 1280 - half + 12);
                 let bob = if self.st.reduce_motion { 0 } else { ((self.t * 1.6 + k as f32).sin() * 3.0) as i32 };
-                crate::assets::draw_char_ex(&mut self.cv, member.id, expr, cx, 712 + bob, if crowd { 520 } else { 600 }, 255, right);
+                crate::assets::draw_char_ex(&mut self.cv, member.id, expr, cx, 712 + bob, ch, 255, right);
                 let nw = Canvas::text_wb(member.name, 2, crate::font::Weight::Black) + 36;
                 self.cv.round_grad(cx - nw / 2, 640, nw, 36, 18, crate::gfx::lighten(member.color, 40), member.color, 255);
                 self.cv.text_weight(cx - nw / 2 + 18, 646, member.name, 2, 0xFF16_1028, 255, crate::font::Weight::Black);

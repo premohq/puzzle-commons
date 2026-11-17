@@ -524,7 +524,18 @@ impl Canvas {
                 }
                 let dx = if xx < r { rf - xx as f32 - 0.5 } else { xx as f32 + 0.5 - (w - r) as f32 };
                 let d = (dx * dx + dy * dy).sqrt();
-                let cov = (rf - d + 0.5).clamp(0.0, 1.0);
+                let mut cov = (rf - d + 0.5).clamp(0.0, 1.0);
+                if ring > 0 {
+                    // a true band: take away the inner shape (inset by `ring`, same corner centre)
+                    let inner = if ring < r {
+                        ((rf - ring as f32) - d + 0.5).clamp(0.0, 1.0)
+                    } else if xx >= ring && xx < w - ring && yy >= ring && yy < h - ring {
+                        1.0
+                    } else {
+                        0.0
+                    };
+                    cov = (cov - inner).max(0.0);
+                }
                 if cov > 0.0 {
                     let p = &mut row[px as usize];
                     *p = blend_px(*p, c, (cov * a as f32) as u32);

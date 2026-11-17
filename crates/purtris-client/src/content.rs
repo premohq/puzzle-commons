@@ -146,10 +146,13 @@ pub fn node_header(world: usize, node: usize, diff: usize, chosen: Profile, seed
     let human = lv.human.unwrap_or(chosen);
     let is_team = !lv.allies.is_empty() || lv.foes.len() > 1 && !lv.ffa;
     seats[0] = SeatCfg { kind: SeatKind::Human, profile: human, team: if is_team { 1 } else { 0 }, ..SeatCfg::default() };
+    // the rivals get stronger across the story: on Easy the first matches face a beginner who
+    // clears small and sends little, and the last world is about where Normal starts
+    let step = (world * 6 + node) as u8; // 0..=29
     let (pers, strength) = match diff {
-        0 => (Personality::Builder, 2),
-        1 => (Personality::Builder, 4),
-        _ => (Personality::Aggressor, 7),
+        0 => (Personality::Cleaner, if step < 4 { 0 } else if step < 12 { 1 } else if step < 24 { 2 } else { 3 }),
+        1 => (Personality::Builder, 2 + step / 8),
+        _ => (Personality::Aggressor, 6 + step / 12),
     };
     let strength = if lv.boss { (strength + 1).min(8) } else { strength };
     let mut k = 1;
@@ -159,14 +162,14 @@ pub fn node_header(world: usize, node: usize, diff: usize, chosen: Profile, seed
         k += 1;
     }
     for &p in lv.foes {
-        let per = if p.style() == Style::Panel && diff == 0 { Personality::Cleaner } else { pers };
+        let per = pers;
         seats[k] = SeatCfg { kind: SeatKind::Bot, profile: p, team: if is_team { 2 } else { 0 }, personality: per, strength, bot_seed: 2000 + k as u32 };
         k += 1;
     }
     let mut opts = Opts::default();
     opts.capsule_level = [2, 5, 8][diff];
     opts.capsule_speed = [0, 1, 1][diff];
-    opts.panel_level = [2, 3, 5][diff];
+    opts.panel_level = [1, 3, 5][diff];
     opts.shared_deal = lv.mode == Mode::CapsuleRace;
     let target = if is_team { TargetRule::Team } else { TargetRule::Direct };
     MatchHeader { seed, mode: lv.mode, target, seats, opts }

@@ -9,16 +9,26 @@ use purtris_sim::matchs::{Board, BotMem, Match, Mode, Personality};
 use purtris_sim::panel::{self, PanelState};
 use purtris_sim::quad::{self, QuadState};
 
-/// Ticks between actions, by strength 1..=8.
-const INTERVAL: [u16; 8] = [22, 15, 11, 8, 6, 4, 3, 2];
+/// Ticks between actions, by strength 0..=8. Strength 0 is the beginner the story's first
+/// Easy matches use: slow, visibly thinking, often wrong (the versus room offers 1..=8).
+const INTERVAL: [u16; 9] = [36, 22, 15, 11, 8, 6, 4, 3, 2];
 /// Mistake percentage, by strength.
-const MISTAKE: [u32; 8] = [30, 20, 14, 9, 6, 3, 1, 0];
+const MISTAKE: [u32; 9] = [45, 30, 20, 14, 9, 6, 3, 1, 0];
 
 fn interval(s: u8) -> u16 {
-    INTERVAL[(s.clamp(1, 8) - 1) as usize]
+    INTERVAL[s.min(8) as usize]
 }
 fn mistake(s: u8) -> u32 {
-    MISTAKE[(s.clamp(1, 8) - 1) as usize]
+    MISTAKE[s.min(8) as usize]
+}
+/// Ticks between sideways taps: the beginner slides pieces at a pace a person can follow.
+/// (Strengths 1..=8 keep their original timing so saved replays still resimulate.)
+fn slide_gap(s: u8, gap: u16) -> u16 {
+    if s == 0 {
+        9
+    } else {
+        gap.min(3)
+    }
 }
 
 /// The bot input for one seat this tick. Call before Match::step.
@@ -73,7 +83,7 @@ fn pick<T: Copy>(mem: &mut BotMem, ranked: &[(i64, T)], personality: Personality
 
 // ---------------------------------------------------------------- Quad
 
-fn quad_eval(grid: &[u8], cleared: u32, personality: Personality, danger: bool, well: bool) -> i64 {
+fn quad_eval(grid: &[u8], cleared: u32, personality: Personality, danger: bool, well: bool, beginner: bool) -> i64 {
     let w = quad::W;
     let h = quad::H;
     let mut heights = [0i64; 10];
@@ -96,6 +106,8 @@ fn quad_eval(grid: &[u8], cleared: u32, personality: Personality, danger: bool, 
     score -= if max_h > 14 { (max_h - 14) * 120 } else { 0 };
     let line_value = match personality {
         Personality::Aggressor => [0, 120, 300, 500, 900],
+        // the beginner clears whatever it can: small clears send little or nothing
+        _ if beginner => [0, 160, 260, 320, 420],
         _ if danger => [0, 200, 400, 600, 1000],
         _ => [0, -40, 40, 200, 1200],
     };
@@ -118,11 +130,13 @@ fn quad_bot(q: &QuadState, p: Personality, s: u8, mem: &mut BotMem, m: &Match) -
     if q.cur.is_none() {
         mem.queue.clear();
         mem.key = 0;
+        mem.hold_bits = 0;
         return 0;
     }
     if mem.key != key {
         mem.key = key;
         mem.queue.clear();
+        mem.hold_bits = 0;
         let cur = q.cur.unwrap();
         let danger = q.height() >= 14 || q.pending_units() >= 4;
         let well = matches!(p, Personality::Builder) && m.header.mode != Mode::QuadSprint;
@@ -173,7 +187,7 @@ fn quad_bot(q: &QuadState, p: Personality, s: u8, mem: &mut BotMem, m: &Match) -
                         ng[(wy * quad::W) as usize..((wy + 1) * quad::W) as usize].copy_from_slice(row);
                         wy -= 1;
                     }
-                    let mut sc = quad_eval(&ng, cleared, p, danger, well);
+                    let mut sc = quad_eval(&ng, cleared, p, danger, well, s == 0);
                     if use_hold {
                         sc -= 5;
                     }
@@ -205,9 +219,15 @@ fn quad_bot(q: &QuadState, p: Personality, s: u8, mem: &mut BotMem, m: &Match) -
         let dx = x - 3;
         let bit = if dx < 0 { B::L } else { B::R };
         for _ in 0..dx.abs() {
-            push_tap(mem, bit, gap.min(3));
+            push_tap(mem, bit, slide_gap(s, gap));
         }
-        push_tap(mem, B::HD, gap);
+        if s == 0 {
+            // the beginner never hard-drops: it pauses, then holds soft drop
+            mem.queue.push_back((0, gap));
+            mem.hold_bits = B::SD;
+        } else {
+            push_tap(mem, B::HD, gap);
+        }
     }
     play_queue(mem)
 }
@@ -334,6 +354,8 @@ fn chain_bot(c: &ChainState, p: Personality, s: u8, mem: &mut BotMem, m: &Match,
             Personality::Aggressor => 2,
             Personality::RandomLegal => 1,
             Personality::Digger => 2,
+            // the beginner pops a group as soon as it can rather than building a chain
+            _ if s == 0 => 1,
             _ => 2 + (s as u32 / 2).min(3),
         };
         let mut ranked: Vec<(i64, (i32, u8))> = Vec::new();
@@ -723,6 +745,42 @@ pub fn fill_bot_inputs(m: &mut Match, inputs: &mut [u16; 6]) {
             let mut mem = std::mem::take(&mut m.bot_mem[i]);
             inputs[i] = bot_input(m, i, &mut mem);
             m.bot_mem[i] = mem;
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use purtris_sim::{quick_header, Outcome, Profile, SeatKind};
+
+    /// The beginner (strength 0) plays every style: it places pieces, never hard-drops in Quad,
+    /// and loses to a strength-6 bot.
+    #[test]
+    fn beginner_plays_and_is_weak() {
+        for p in [Profile::QuadPpt, Profile::ChainTsu, Profile::CapsuleVs, Profile::PanelPdp] {
+            let h = quick_header(7, Mode::Versus, &[(SeatKind::Bot, p, Personality::Cleaner, 0), (SeatKind::Bot, p, Personality::Builder, 6)]);
+            let mut m = Match::new(h).expect("match");
+            let mut hard_drops = 0;
+            let mut moved = 0;
+            while m.outcome == Outcome::Running && m.tick < 60 * 60 * 5 {
+                let mut ins = [0u16; 6];
+                crate::fill_bot_inputs(&mut m, &mut ins);
+                if ins[0] & B::HD != 0 {
+                    hard_drops += 1;
+                }
+                if ins[0] != 0 {
+                    moved += 1;
+                }
+                m.step(ins);
+            }
+            assert!(moved > 0, "{:?}: the beginner never pressed anything", p);
+            if p == Profile::QuadPpt {
+                assert_eq!(hard_drops, 0, "the beginner hard-dropped");
+            }
+            assert!(!m.is_winner(0) || m.outcome == Outcome::Running, "{:?}: the beginner beat strength 6", p);
+            // and it sends little: the point of Easy is a rival who does not bury you
+            assert!(m.seats[0].stats.sent <= 12, "{:?}: the beginner sent {}", p, m.seats[0].stats.sent);
         }
     }
 }
