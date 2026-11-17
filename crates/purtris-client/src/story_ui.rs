@@ -48,12 +48,10 @@ impl App {
     }
 
     /// Play scene `id` (once), then go to `then`.
-    pub(crate) fn play_scene(&mut self, id: &'static str, then: Screen) -> Screen {
-        if cast::scene(id).is_none() {
-            return then;
-        }
-        self.mark_scene(id);
-        Screen::Scene { id, line: 0, t: 0.0, then: Box::new(then) }
+    pub(crate) fn play_scene(&mut self, id: &str, then: Screen) -> Screen {
+        let Some(sc) = cast::scene(id) else { return then };
+        self.mark_scene(sc.id);
+        Screen::Scene { id: sc.id, line: 0, t: 0.0, then: Box::new(then) }
     }
 
     pub(crate) fn scene_screen(&mut self, nav: &Nav, id: &'static str, mut line: usize, mut t: f32, then: Box<Screen>) -> Screen {
@@ -68,9 +66,11 @@ impl App {
         }
         // the speakers: the latest left and right voices up to this line
         let cur = &sc.lines[line.min(sc.lines.len() - 1)];
+        // voices (the box, Sena) have no body: they never take a side
         let on_right = |w: &str| sc.right.contains(&w);
-        let left = sc.lines[..=line.min(sc.lines.len() - 1)].iter().rev().find(|x| !on_right(x.who));
-        let right = sc.lines[..=line.min(sc.lines.len() - 1)].iter().rev().find(|x| on_right(x.who));
+        let body = |w: &str| cast::voice(w).is_none();
+        let left = sc.lines[..=line.min(sc.lines.len() - 1)].iter().rev().find(|x| body(x.who) && !on_right(x.who));
+        let right = sc.lines[..=line.min(sc.lines.len() - 1)].iter().rev().find(|x| body(x.who) && on_right(x.who));
         let ease = (t * 4.0).min(1.0);
         let slide = ((1.0 - ease) * 60.0) as i32;
         for (who, is_right) in [(left, false), (right, true)] {
@@ -84,19 +84,21 @@ impl App {
             }
         }
         // dialogue box with a name tab
-        let m = cast::get(cur.who);
+        let voice = cast::voice(cur.who);
+        let (name, color) = voice.unwrap_or_else(|| (cast::get(cur.who).name, cast::get(cur.who).color));
         self.cv.glass(60, 488, 1160, 196, 30, GLASS, 205);
-        let nw = Canvas::text_wb(m.name, 3, Weight::Black) + 56;
+        let nw = Canvas::text_wb(name, 3, Weight::Black) + 56;
         let nx = if on_right(cur.who) { 1190 - nw } else { 90 };
-        self.cv.round_grad(nx, 462, nw, 50, 25, crate::gfx::lighten(m.color, 40), m.color, 255);
-        self.cv.text_weight(nx + 28, 470, m.name, 3, 0xFF16_1028, 255, Weight::Black);
-        // typewriter
-        let shown = ((t - 0.15).max(0.0) * 52.0) as usize;
+        self.cv.round_grad(nx, 462, nw, 50, 25, crate::gfx::lighten(color, 40), color, 255);
+        self.cv.text_weight(nx + 28, 470, name, 3, 0xFF16_1028, 255, Weight::Black);
+        // typewriter, with a beat after each sentence
+        let shown = crate::story::reveal(cur.text, (t - 0.15).max(0.0));
         let full = cur.text.chars().count();
         let text: String = cur.text.chars().take(shown.min(full)).collect();
         let lines = crate::gfx::wrap(&text, 1090, 3);
         for (k, ln) in lines.iter().enumerate().take(3) {
-            self.cv.text_weight(98, 530 + k as i32 * 42, ln, 3, 0xFFF4_F6FF, 255, Weight::Regular);
+            let ink = if voice.is_some() { 0xFFFF_E7B8 } else { 0xFFF4_F6FF };
+            self.cv.text_weight(98, 530 + k as i32 * 42, ln, 3, ink, 255, Weight::Regular);
         }
         let done = shown >= full;
         if done {

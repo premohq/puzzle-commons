@@ -950,14 +950,9 @@ impl App {
             Origin::Story { .. } => index("mira"),
             _ => index(self.card.character()),
         };
-        let story_foes: Option<[&str; 4]> = match origin {
-            Origin::Story { world, .. } => Some(match *world {
-                0 => ["nami", "sora", "taro", "emi"],
-                1 => ["hana", "emi", "ren", "sora"],
-                2 => ["yuki", "taro", "kai", "ren"],
-                3 => ["rin", "ren", "sora", "emi"],
-                _ => ["kaede", "kai", "nami", "rin"],
-            }),
+        // the story names who plays every bot seat of every node (content.rs)
+        let story_foes: Option<&[&str]> = match origin {
+            Origin::Story { world, node, .. } => Some(crate::content::WORLDS[(*world).min(4)].nodes[(*node).min(5)].who),
             _ => None,
         };
         let mut human_seen = false;
@@ -977,7 +972,9 @@ impl App {
                     let fans: Vec<&str> = crate::cast::CAST.iter().filter(|m| m.style == si).map(|m| m.id).collect();
                     let mut options: Vec<&str> = Vec::new();
                     if let Some(f) = story_foes {
-                        options.push(f[foe_k.min(3)]);
+                        if let Some(id) = f.get(foe_k) {
+                            options.push(*id);
+                        }
                         foe_k += 1;
                     }
                     options.push(style_champ);
@@ -1094,7 +1091,8 @@ impl App {
             (_, 1, 0) => "1 vs 1".into(),
             (_, f, a) => format!("{} vs {}", a + 1, f),
         };
-        let (rid, rname) = crate::assets::rival(world);
+        let rid = crate::content::node_rival(world, node);
+        let rname = crate::cast::get(rid).name;
         if self.st.characters {
             let expr = if n.level.boss { "angry" } else { "smug" };
             crate::assets::draw_char(&mut self.cv, rid, expr, 1150, 690, 340, 255);
@@ -1174,16 +1172,22 @@ impl App {
         let mut dev = [None; 6];
         dev[0] = Some(self.default_dev());
         let play = self.start(h, dev, Origin::Story { world, node, diff, chosen: p }, false);
-        const BOSS: [&str; 5] = ["w0_boss", "w1_boss", "w2_boss", "w3_boss", "w4_boss"];
-        const MID: [&str; 5] = ["w0_mid", "w1_mid", "w2_mid", "w3_mid", "w4_mid"];
-        if node == 5 && !self.scene_seen(BOSS[world.min(4)]) {
-            return self.play_scene(BOSS[world.min(4)], play);
+        // before the match: the node's own short scene (wN_nK), and before that the world's
+        // turning points: the quieter scene halfway (node 3) and the champion's scene (node 6)
+        let pre = format!("w{}_n{}", world.min(4), node);
+        let mut next = play;
+        if !self.scene_seen(&pre) {
+            next = self.play_scene(&pre, next);
         }
-        // halfway through each world the story takes a quieter turn
-        if node == 2 && !self.scene_seen(MID[world.min(4)]) {
-            return self.play_scene(MID[world.min(4)], play);
+        let big = match node {
+            2 => format!("w{}_mid", world.min(4)),
+            5 => format!("w{}_boss", world.min(4)),
+            _ => String::new(),
+        };
+        if !big.is_empty() && !self.scene_seen(&big) {
+            next = self.play_scene(&big, next);
         }
-        play
+        next
     }
 
     /// After a story match: the world's victory scene (and the epilogue) the first time its
@@ -1201,6 +1205,13 @@ impl App {
                     back
                 };
                 return self.play_scene(CLEAR[(*world).min(4)], next);
+            }
+        }
+        // the rival (or Kai) reacts to the first win and the first loss at every node
+        if let Origin::Story { world, node, .. } = origin {
+            let id = format!("w{}_n{}_{}", (*world).min(4), node, if won { "win" } else { "lose" });
+            if !self.scene_seen(&id) {
+                return self.play_scene(&id, back);
             }
         }
         back
@@ -2349,8 +2360,8 @@ impl App {
         }
         // the cast reacts: Mira cheers or pouts; in story mode the world's rival does the opposite
         if self.st.characters {
-            if let Origin::Story { world, .. } = g.origin {
-                let (rid, _) = crate::assets::rival(world);
+            if let Origin::Story { world, node, .. } = g.origin {
+                let rid = crate::content::node_rival(world, node);
                 crate::assets::draw_char(&mut self.cv, rid, if won { "sad" } else { "delighted" }, 1010, 668, 220, 255);
             }
         }

@@ -45,6 +45,8 @@ pub struct Node {
     pub line: &'static str,
     pub level: Level,
     pub extra: Obj,
+    /// who plays the bot seats, in seat order (allies, then foes): cast ids
+    pub who: &'static [&'static str],
 }
 
 pub struct World {
@@ -78,63 +80,69 @@ pub const WORLDS: [World; 5] = [
         name: "Quad Reef",
         style: "QUAD",
         nodes: [
-            Node { name: "Lantern Shore", line: "Hi, I'm Mira, courier! Stack the falling gems and fill rows to clear them. Twenty rows and this delivery's done.", level: solo(Mode::QuadTwenty, QuadGuideline), extra: Obj::TickPar(5400, 3000) },
-            Node { name: "Coral Steps", line: "Clear two or more rows to send garbage to your rival. Four at once hits hard. Nami calls it a tidal wave, then blushes.", level: duel(Q, Some(QuadPpt)), extra: Obj::SendAtLeast(6, 10) },
-            Node { name: "Bubble Rise", line: "Your clears cancel garbage still on its way. Watch the meter on the left, the way Nami watches the harbor.", level: duel(Q, Some(QuadPpt)), extra: Obj::SendAtLeast(8, 14) },
-            Node { name: "Kelp Gate", line: "Hold a piece for later with the hold key. Plan one piece ahead. Nami gave her hold slot a name. Ask her.", level: duel(Q, Some(QuadPpt)), extra: Obj::TickPar(7200, 5400) },
-            Node { name: "Twin Current", line: "Kai joins in! Two against two, last team standing wins. He says he's bad at this. We'll see.", level: team(Q, &[QuadPpt, QuadPpt], Some(QuadPpt)), extra: Obj::TeamTwoAlive },
-            Node { name: "Reef Warden", line: "Nami stacks fast and sends often. Keep your stack low, hit back, and stand up straight. She'll check.", level: boss(Q, Some(QuadPpt)), extra: Obj::SendAtLeast(10, 18) },
+            Node { name: "Lantern Shore", line: "Stack the falling gems and fill rows to clear them. Twenty rows, no holes, and Nami might actually talk to us.", level: solo(Mode::QuadTwenty, QuadGuideline), extra: Obj::TickPar(5400, 3000), who: &[] },
+            Node { name: "Coral Steps", line: "Clear two or more rows at once to send garbage; four at once hits hardest. Win, and Haru rows us out to the steps.", level: duel(Q, Some(QuadPpt)), extra: Obj::SendAtLeast(6, 10), who: &["haru"] },
+            Node { name: "Bubble Rise", line: "Your clears cancel garbage still on its way, so watch the meter on the left. Sora only ever watches Sora.", level: duel(Q, Some(QuadPpt)), extra: Obj::SendAtLeast(8, 14), who: &["sora"] },
+            Node { name: "Kelp Gate", line: "Hold a piece for later and plan one ahead. Jun holds everything, including grudges. He could really use a nap.", level: duel(Q, Some(QuadPpt)), extra: Obj::TickPar(7200, 5400), who: &["jun"] },
+            Node { name: "Twin Current", line: "Kai teams up with me! Two on two, last team standing. He's lost his last three by exactly one row. Weird.", level: team(Q, &[QuadPpt, QuadPpt], Some(QuadPpt)), extra: Obj::TeamTwoAlive, who: &["kai", "sora", "jun"] },
+            Node { name: "Reef Warden", line: "Nami stacks fast and sends often. Keep low, hit back, and leave a column open for the long piece. Stand up straight.", level: boss(Q, Some(QuadPpt)), extra: Obj::SendAtLeast(10, 18), who: &["nami"] },
         ],
     },
     World {
         name: "Bloom Valley",
         style: "CHAIN",
         nodes: [
-            Node { name: "Seed Plot", line: "Join four blobs of one color and they pop. Keep the X cell at the top clear! Gerald fell in it once.", level: duel(C, Some(ChainTsu)), extra: Obj::ChainAtLeast(2, 3) },
-            Node { name: "Sprout Path", line: "When one pop makes others fall and pop, that's a chain. Chains send far more. Hana says they bloom.", level: duel(C, Some(ChainTsu)), extra: Obj::ChainAtLeast(3, 4) },
-            Node { name: "Rain Terrace", line: "A small chain can cancel nuisance in your tray before it lands. Like an umbrella, but angrier.", level: duel(C, Some(ChainTsu)), extra: Obj::SendAtLeast(10, 24) },
-            Node { name: "Root Hollow", line: "Build stairs: groups of three stacked so each pop feeds the next. Hana's flowers climb old gray stone the same way.", level: duel(C, Some(ChainTsu)), extra: Obj::ChainAtLeast(4, 5) },
-            Node { name: "Pollen Pair", line: "Two blob builders on your side. Fire when your partner's in trouble. Kai is in trouble a lot. Suspiciously.", level: team(C, &[ChainTsu, ChainTsu], Some(ChainTsu)), extra: Obj::TeamTwoAlive },
-            Node { name: "Bloom Keeper", line: "Hana builds tall and fires big. Fire first, or fire bigger. Then tea. Gerald insists.", level: boss(C, Some(ChainTsu)), extra: Obj::ChainAtLeast(4, 6) },
+            Node { name: "Seed Plot", line: "Join four blobs of one color to pop them. Keep the third column clear at the top, or it's over. Kiko's bees are watching.", level: duel(C, Some(ChainTsu)), extra: Obj::ChainAtLeast(2, 3), who: &["kiko"] },
+            Node { name: "Sprout Path", line: "When a pop makes others fall and pop, that's a chain, and chains send far more. Emi never plans hers. Don't copy Emi.", level: duel(C, Some(ChainTsu)), extra: Obj::ChainAtLeast(3, 4), who: &["emi"] },
+            Node { name: "Rain Terrace", line: "A small chain cancels nuisance in your tray before it lands. It's pouring, and Hana is out watering the stones. Why?", level: duel(C, Some(ChainTsu)), extra: Obj::SendAtLeast(10, 24), who: &["ren"] },
+            Node { name: "Root Hollow", line: "Build stairs: groups of three stacked so each pop sets off the next. Luna wants my box. Luna is not getting my box.", level: duel(C, Some(ChainTsu)), extra: Obj::ChainAtLeast(4, 5), who: &["luna"] },
+            Node { name: "Pollen Pair", line: "Two on two in the garden. Fire when your partner's in trouble. Kai keeps 'sneezing' whenever a big chain is close.", level: team(C, &[ChainTsu, ChainTsu], Some(ChainTsu)), extra: Obj::TeamTwoAlive, who: &["kai", "kiko", "emi"] },
+            Node { name: "Bloom Keeper", line: "Hana builds tall and fires big. Fire first, or fire bigger. And ask her about the stones. Gently.", level: boss(C, Some(ChainTsu)), extra: Obj::ChainAtLeast(4, 6), who: &["hana"] },
         ],
     },
     World {
         name: "Clinic Moon",
         style: "CAPSULE",
         nodes: [
-            Node { name: "Germ Garden", line: "Line up four of one color, capsule halves or germs, to clear them. Clear every germ first to win! Yuki says wash up.", level: Level { mode: Mode::CapsuleRace, human: Some(CapsuleVs), allies: NONE, foes: K, ffa: false, boss: false }, extra: Obj::TickPar(7200, 4800) },
-            Node { name: "Vial Row", line: "In versus, two lines at once send loose halves to your rival. Yuki calls that \"sharing your medicine.\"", level: duel(K, Some(CapsuleVs)), extra: Obj::SendAtLeast(3, 6) },
-            Node { name: "Pill Drop", line: "Halves that lose their partner fall. A fall that makes a line is a chain. Kai says he's allergic to chains. Sure.", level: duel(K, Some(CapsuleVs)), extra: Obj::ChainAtLeast(2, 3) },
-            Node { name: "Quarantine", line: "Another race. Take the low germs first so nothing gets buried. I keep thinking about that quiet ward.", level: Level { mode: Mode::CapsuleRace, human: Some(CapsuleVs), allies: NONE, foes: K, ffa: false, boss: false }, extra: Obj::TickPar(6000, 4200) },
-            Node { name: "Ward Pair", line: "Two on two in the clinic. Keep your bottle neck open! Kai's quiet today. Not even a fake cough.", level: team(K, &[CapsuleVs, CapsuleVs], Some(CapsuleVs)), extra: Obj::TeamTwoAlive },
-            Node { name: "Head Nurse", line: "She clears fast and sends often. Clear germs and send back. Yuki's prognosis: we lose. Mine: we don't.", level: boss(K, Some(CapsuleVs)), extra: Obj::SendAtLeast(6, 10) },
+            Node { name: "Germ Garden", line: "Line up four of a color, capsule halves or germs, to clear them. Same bottle as Aoi: clear every germ first to win.", level: Level { mode: Mode::CapsuleRace, human: Some(CapsuleVs), allies: NONE, foes: K, ffa: false, boss: false }, extra: Obj::TickPar(7200, 4800), who: &["aoi"] },
+            Node { name: "Vial Row", line: "Clearing two lines at once sends loose halves to your rival. Taro needs a good story for his brother. Let's give him one.", level: duel(K, Some(CapsuleVs)), extra: Obj::SendAtLeast(3, 6), who: &["taro"] },
+            Node { name: "Pill Drop", line: "Halves that lose their partner fall, and a fall that makes a line is a chain. Luna's back. I need to know who sent her.", level: duel(K, Some(CapsuleVs)), extra: Obj::ChainAtLeast(2, 3), who: &["luna"] },
+            Node { name: "Quarantine", line: "Another race. Take the low germs first so nobody's left at the bottom. Then I post my letter to Nami. Today. I will.", level: Level { mode: Mode::CapsuleRace, human: Some(CapsuleVs), allies: NONE, foes: K, ffa: false, boss: false }, extra: Obj::TickPar(6000, 4200), who: &["aoi"] },
+            Node { name: "Ward Pair", line: "Two on two in the clinic. Keep the neck of your bottle open. Kai has 'matchitis' now. I've stopped writing these down.", level: team(K, &[CapsuleVs, CapsuleVs], Some(CapsuleVs)), extra: Obj::TeamTwoAlive, who: &["kai", "aoi", "taro"] },
+            Node { name: "Night Doctor", line: "Yuki clears fast and sends often. Clear germs and send them back. Her prognosis: I lose. Mine: she finally sleeps.", level: boss(K, Some(CapsuleVs)), extra: Obj::SendAtLeast(6, 10), who: &["yuki"] },
         ],
     },
     World {
         name: "Tile Bazaar",
         style: "PANEL",
         nodes: [
-            Node { name: "Charm Stall", line: "Panels don't fall from the sky here. Swap two side by side to make three in a row. Rin says swapping is free. Today.", level: solo(Mode::PanelPuzzle(1), PanelPdp), extra: Obj::Win },
-            Node { name: "Swap Lane", line: "The stack keeps rising, like Rin's prices. Clear panels to pause it, and don't let it reach the top line.", level: duel(P, Some(PanelPdp)), extra: Obj::ChainAtLeast(2, 3) },
-            Node { name: "Rising Market", line: "Garbage stones land on you. Clear panels next to them to crack them open. Gray again. I'm fine. Totally fine.", level: duel(P, Some(PanelPdp)), extra: Obj::SendAtLeast(6, 12) },
-            Node { name: "Puzzle Kiosk", line: "Two moves, two rows. Think before you swap. Some people should think before they lie. Just saying.", level: solo(Mode::PanelPuzzle(4), PanelPdp), extra: Obj::Win },
-            Node { name: "Lantern Pair", line: "Team panels! Chains crack stones and send them across. I need a partner I can trust. Kai keeps following me anyway. Ugh.", level: team(P, &[PanelPdp, PanelPdp], Some(PanelPdp)), extra: Obj::TeamTwoAlive },
-            Node { name: "Bazaar Chief", line: "The Chief cracks stones and returns chains. Stay low, build quietly. Then Kai and I are talking.", level: boss(P, Some(PanelPdp)), extra: Obj::ChainAtLeast(3, 4) },
+            Node { name: "Charm Stall", line: "Panels don't fall here: swap two side by side to make three in a row, in the moves allowed. Ball boy? What ball boy?", level: solo(Mode::PanelPuzzle(1), PanelPdp), extra: Obj::Win, who: &[] },
+            Node { name: "Swap Lane", line: "The stack keeps rising, like Rin's prices. Clear panels to pause it and keep it off the top line. Mei reads fortunes in it.", level: duel(P, Some(PanelPdp)), extra: Obj::ChainAtLeast(2, 3), who: &["mei"] },
+            Node { name: "Rising Market", line: "Garbage stones land on you: clear panels next to them to crack them open. I'm doing this part alone. I'm fine.", level: duel(P, Some(PanelPdp)), extra: Obj::SendAtLeast(6, 12), who: &["ren"] },
+            Node { name: "Puzzle Kiosk", line: "Two moves, two rows. Think before you swap. Some people should think before they lie for seven years.", level: solo(Mode::PanelPuzzle(4), PanelPdp), extra: Obj::Win, who: &[] },
+            Node { name: "Lantern Pair", line: "Team panels, with Luna of all people. Chains crack stones and send them across. Kai's in the stands. I'm ignoring him.", level: team(P, &[PanelPdp, PanelPdp], Some(PanelPdp)), extra: Obj::TeamTwoAlive, who: &["luna", "mei", "ren"] },
+            Node { name: "Bazaar Chief", line: "Rin cracks stones and chains them right back. Stay low and build quietly. Then Kai and I are going to talk.", level: boss(P, Some(PanelPdp)), extra: Obj::ChainAtLeast(3, 4), who: &["rin"] },
         ],
     },
     World {
         name: "Cinder Crown",
         style: "MIXED",
         nodes: [
-            Node { name: "First Meeting", line: "Cinder Crown, where every style meets! Your quad clears land as nuisance blobs on their side. Rude, but effective.", level: duel(C, Some(QuadPpt)), extra: Obj::SendAtLeast(8, 14) },
-            Node { name: "Your Way", line: "Pick any style you like. Your rival plays panels. Every style I borrowed came with a friend attached.", level: duel(P, None), extra: Obj::SendAtLeast(6, 12) },
-            Node { name: "Mixed Pair", line: "A capsule medic fights beside you against blocks and blobs. Yuki's orders: \"Don't top out. Paperwork.\"", level: team(K, &[QuadPpt, ChainTsu], None), extra: Obj::TeamTwoAlive },
-            Node { name: "Three by Three", line: "Six boards at once, so watch who is sending at you. Kaede sends at everyone. Mostly at herself.", level: team(&[ChainTsu, PanelPdp], &[QuadPpt, CapsuleVs, ChainTsu], None), extra: Obj::TeamTwoAlive },
-            Node { name: "Free For All", line: "Three players, no teams, last one standing wins. After today, nobody has to stand alone.", level: Level { mode: Mode::Versus, human: None, allies: NONE, foes: &[QuadPpt, PanelPdp], ffa: true, boss: false }, extra: Obj::SendAtLeast(8, 16) },
-            Node { name: "Grand Voyage", line: "The volcano is waking. Everything you've learned, all at once. Old boards remember. Let's finish this together!", level: Level { mode: Mode::Versus, human: None, allies: &[PanelPdp, CapsuleVs], foes: &[QuadPpt, ChainTsu, PanelPdp], ffa: false, boss: true }, extra: Obj::TeamTwoAlive },
+            Node { name: "First Meeting", line: "Every style meets here: my quad clears land on Saki as nuisance blobs. She fights for the Queen like a shield.", level: duel(C, Some(QuadPpt)), extra: Obj::SendAtLeast(8, 14), who: &["saki"] },
+            Node { name: "Your Way", line: "Pick any style you like; Toma plays panels. He keeps every record, and he's 'T'. He put the Queen's seal on my box.", level: duel(P, None), extra: Obj::SendAtLeast(6, 12), who: &["toma"] },
+            Node { name: "Mixed Pair", line: "Luna plays capsule medic beside me, against blocks and blobs. Saki and Toma cover each other like old partners.", level: team(K, &[QuadPpt, ChainTsu], None), extra: Obj::TeamTwoAlive, who: &["luna", "saki", "toma"] },
+            Node { name: "Three by Three", line: "Six boards at once, so watch who's sending at you. Kai asked for the Chain board. For real, this time.", level: team(&[ChainTsu, PanelPdp], &[QuadPpt, CapsuleVs, ChainTsu], None), extra: Obj::TeamTwoAlive, who: &["kai", "luna", "saki", "toma", "jun"] },
+            Node { name: "Free For All", line: "Three of us, no teams, last one standing picks breakfast. Kai, Luna and me, the night before the Queen.", level: Level { mode: Mode::Versus, human: None, allies: NONE, foes: &[QuadPpt, PanelPdp], ffa: true, boss: false }, extra: Obj::SendAtLeast(8, 16), who: &["kai", "luna"] },
+            Node { name: "Grand Voyage", line: "Every style I've borrowed, all at once, with Kai and Luna beside me and Kaede's court across. Let's make that seat answer.", level: Level { mode: Mode::Versus, human: None, allies: &[PanelPdp, CapsuleVs], foes: &[QuadPpt, ChainTsu, PanelPdp], ffa: false, boss: true }, extra: Obj::TeamTwoAlive, who: &["kai", "luna", "kaede", "saki", "toma"] },
         ],
     },
 ];
+
+/// The cast id of a story node's main rival: its first foe, or the world's champion for solo nodes.
+pub fn node_rival(world: usize, node: usize) -> &'static str {
+    let n = &WORLDS[world.min(4)].nodes[node.min(5)];
+    n.who.get(n.level.allies.len()).copied().unwrap_or(["nami", "hana", "yuki", "rin", "kaede"][world.min(4)])
+}
 
 pub const DIFF_NAMES: [&str; 3] = ["EASY", "NORMAL", "HARD"];
 
