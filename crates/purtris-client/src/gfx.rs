@@ -290,6 +290,10 @@ impl Canvas {
         let y1 = (y + h).min(self.h);
         self.clip = (x0, y0, x1.max(x0), y1.max(y0));
     }
+    /// The clip rectangle in real pixels: (x0, y0, x1, y1), end-exclusive.
+    pub fn clip_px(&self) -> (i32, i32, i32, i32) {
+        self.clip
+    }
     pub fn reset_clip(&mut self) {
         self.clip = (0, 0, self.w, self.h);
     }

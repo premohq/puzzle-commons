@@ -170,7 +170,7 @@ copied anywhere.
 ### Rebuilding the art (optional, needs Blender 5)
 
 `python3 tools/fetch_assets.py` downloads the CC0 Poly Haven sources; CC0 model packs go in `third_party/oga/`.
-Then run the scripts in `tools/blender/` (`overworld.py`, `export_cast.py`, `font_atlas.py`, `icons.py`,
+Then run the scripts in `tools/blender/` (`overworld.py`, `export_cast.py`, `viruses.py`, `font_atlas.py`, `icons.py`,
 `logo.py`) with `blender -b --factory-startup --python <script> -- <args>`.
 
 The cast: put the VRoid CC0 sample avatars (sources in `third_party/vroid_cc0/LICENSE.txt`) as `.vrm` files in
@@ -196,6 +196,8 @@ All free licenses; the details are in each folder's license file.
 - **Fonts:** Lato, M PLUS Rounded 1c, Mochiy Pop One (SIL OFL 1.1, `assets/fonts/`).
 - **Icons and tile symbols:** Phosphor Icons (MIT).
 - **Controller mappings:** SDL_GameControllerDB (zlib, `assets/input/`).
+- **Match effects:** no third-party assets. Shards, droplets, sparkles, smoke puffs, shockwaves and the sticker
+  lettering are drawn by the engine itself (`crates/purtris-client/src/fx.rs`) at the screen's real resolution.
 
 ## License
 

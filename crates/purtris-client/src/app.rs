@@ -383,7 +383,7 @@ pub enum Screen {
     Play(Box<Game>),
     Results(Box<Results>),
     /// a story scene, then `then`
-    Scene { id: &'static str, line: usize, t: f32, then: Box<Screen> },
+    Scene(Box<crate::scene_ui::SceneView>),
     /// character select before a match
     Select(Box<crate::story_ui::Select>),
     /// first-run setup with Mira
@@ -636,6 +636,8 @@ pub struct App {
     pub display_undo: Option<(crate::settings_ui::DisplaySnap, f32)>,
     /// characters picked on the select screen for the next match
     pub next_chars: Option<[usize; 6]>,
+    /// seconds of fade-in from black left (after a story scene ends)
+    pub fade_in: f32,
     boot_draw: f32,
     /// world maps scaled to the screen, sharp and blurred, keyed by (world, pixel width)
     scaled_maps: std::collections::HashMap<(usize, i32), (Canvas, std::sync::Arc<crate::gfx::Backdrop>)>,
@@ -690,6 +692,7 @@ impl App {
             script: crate::script::Script::from_env(),
             display_undo: None,
             next_chars: None,
+            fade_in: 0.0,
             boot_draw: 0.0,
             scaled_maps: std::collections::HashMap::new(),
             blurred_maps: std::collections::HashMap::new(),
@@ -728,6 +731,8 @@ impl App {
         let mut script_quit = false;
         // glass re-snapshots the scene each frame (taken lazily by the first glass panel)
         self.cv.drop_backdrop();
+        // the cast stands in neutral light unless a screen says otherwise (story scenes)
+        crate::light::set(crate::light::Rig::STUDIO);
         self.input.poll(win);
         self.dt = dt;
         if let Some(sc) = &mut self.script {
@@ -743,6 +748,10 @@ impl App {
         let scr = std::mem::replace(&mut self.screen, Screen::Title);
         let next = self.run(scr, &nav, dt);
         self.screen = next;
+        if self.fade_in > 0.0 && !matches!(self.screen, Screen::Scene(_)) {
+            self.cv.rect_a(0, 0, crate::render::W, crate::render::H, 0xFF00_0000, (self.fade_in / 0.45 * 255.0).min(255.0) as u32);
+            self.fade_in -= dt;
+        }
         if let Some((_, t)) = &mut self.toast {
             *t -= dt;
         }
@@ -758,7 +767,7 @@ impl App {
             self.cv.text_weight(640 - w / 2 + 24, 69, s, 2, l.accent, 255, crate::font::Weight::Bold);
         }
         // persistent real-time clock, top right on every screen
-        if !matches!(self.screen, Screen::Boot { .. }) {
+        if !matches!(self.screen, Screen::Boot { .. } | Screen::Scene(_)) {
             let txt = crate::clock::text();
             let w = Canvas::text_wb(&txt, 2, crate::font::Weight::Bold) + 52;
             let x = crate::render::W - w - 10;
@@ -914,7 +923,7 @@ impl App {
             Screen::Help(page) => self.help(nav, page),
             Screen::Play(g) => self.play(nav, g, dt),
             Screen::Results(r) => self.results(nav, r),
-            Screen::Scene { id, line, t, then } => self.scene_screen(nav, id, line, t, then),
+            Screen::Scene(v) => self.scene_screen(nav, v),
             Screen::Select(s) => self.select_screen(nav, s),
             Screen::Setup { page, sel } => self.setup_screen(nav, page, sel),
             Screen::Ranks { page, confirm } => self.ranks_screen(nav, page, confirm),
@@ -1480,7 +1489,7 @@ impl App {
         match Game::new(h, devices, names, origin, training) {
             Ok(mut g) => {
                 g.chars = chars;
-                self.r.fx = crate::render::Fx::new();
+                self.r.fx = crate::fx::Fx::new();
                 self.r.scene.index = (self.r.scene.index + 1) % 5;
                 self.bg_world = self.r.scene.index;
                 if let Ok(mut s) = self.synth.lock() {
@@ -1578,6 +1587,7 @@ impl App {
         let rid = crate::content::node_rival(world, node);
         let rname = crate::cast::name_of(rid);
         if self.st.characters {
+            crate::light::set(crate::light::world(world.min(4), crate::light::Mood::Day));
             // the rival in their signature pose, with a name plate in the section color
             let bob = if self.st.reduce_motion { 0 } else { ((self.t * 2.0).sin() * 2.0) as i32 };
             crate::assets::draw_char_ex(&mut self.cv, rid, "p-rival", 1140, 676 + bob, 400, 255, true);
@@ -2606,8 +2616,7 @@ impl App {
         let energy = self.r.fx.energy;
         let _ = energy;
         self.bg_blur(70);
-        let shake = if self.st.shake && !self.st.reduce_motion { self.r.fx.shake } else { 0.0 };
-        let sx = (shake * ((self.t * 50.0).sin())) as i32;
+        let (sx, sy) = if self.st.shake && !self.st.reduce_motion { self.r.fx.shake_offset(self.t) } else { (0, 0) };
         let ah = if g.training { 634 } else { 668 };
         let active: Vec<usize> = (0..6).filter(|&i| g.m.seats[i].board.is_some()).collect();
         // the characters stand beside the boards, reacting to the match: always in the story,
@@ -2616,13 +2625,17 @@ impl App {
         let flank = self.st.characters && self.st.theme != ThemeId::Tournament && ((story && active.len() <= 4) || (self.st.chars_versus && active.len() <= 2));
         let crowd = active.len() > 2;
         let area = if !flank {
-            (20 + sx, 44, 1240, ah)
+            (20 + sx, 44 + sy, 1240, ah)
         } else if crowd {
-            (205 + sx, 44, 870, ah)
+            (205 + sx, 44 + sy, 870, ah)
         } else {
-            (250 + sx, 44, 780, ah)
+            (250 + sx, 44 + sy, 780, ah)
         };
         if flank {
+            // story matches: the characters stand in their world's light
+            if let Origin::Story { world, node, .. } = g.origin {
+                crate::light::set(crate::light::world(world.min(4), if node == 5 { crate::light::Mood::Duel } else { crate::light::Mood::Day }));
+            }
             let shown: Vec<usize> = if crowd { vec![active[0], *active.iter().find(|&&i| !g.humans[i]).unwrap_or(&active[1])] } else { active.clone() };
             for (k, &i) in shown.iter().enumerate() {
                 let seat = &g.m.seats[i];

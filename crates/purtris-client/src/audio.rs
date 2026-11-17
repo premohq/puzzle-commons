@@ -56,6 +56,8 @@ pub enum Sfx {
     Count,
     Go,
     Rise,
+    /// a story voice blip at this pitch (Hz)
+    Voice(u32),
 }
 
 /// Scene keys: root frequency and a chord progression (semitones from root, minor flag).
@@ -188,6 +190,11 @@ impl Synth {
             }
             Sfx::Danger => self.voice(Square, 220.0, 220.0, 0.1, 0.08, false),
             Sfx::Menu => self.voice(Tri, 660.0, 660.0, 0.03, 0.1, false),
+            Sfx::Voice(hz) => {
+                let f = hz as f32;
+                self.voice(Tri, f, f * 1.04, 0.035, 0.055, false);
+                self.voice(Sine, f * 2.0, f * 2.0, 0.025, 0.02, false);
+            }
             Sfx::Select => {
                 self.voice(Tri, 660.0, 660.0, 0.05, 0.12, false);
                 self.voice_d(Tri, 990.0, 990.0, 0.08, 0.12, false, 0.05, 0.0);
