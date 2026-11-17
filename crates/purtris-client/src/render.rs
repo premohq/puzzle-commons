@@ -30,6 +30,37 @@ pub struct Callout {
     t: f32,
     color: u32,
     scale: i32,
+    /// where it pops, relative to the field's top-left (None: a third of the way down)
+    at: Option<(f32, f32)>,
+}
+
+/// Where the falling piece will land (board cells), where it is now, and its colour.
+#[derive(Clone, Default)]
+pub struct Landing {
+    pub cells: Vec<(i32, i32)>,
+    pub now: Vec<(i32, i32)>,
+    pub color: u32,
+}
+
+#[derive(Clone, Copy)]
+enum MarkKind {
+    /// a cell that just locked glows and fades
+    Flash,
+    /// a hard-drop trail: a column of light from y0 down to the cell
+    Streak(f32),
+    /// a shockwave ring from a big clear
+    Ring(f32),
+}
+struct Mark {
+    seat: usize,
+    kind: MarkKind,
+    /// field-relative layout position and cell size when it was made
+    x: f32,
+    y: f32,
+    w: f32,
+    color: u32,
+    t: f32,
+    life: f32,
 }
 
 #[derive(Clone, Copy, Default)]
@@ -156,10 +187,34 @@ pub struct Fx {
     pub flash: [f32; 6],
     pub energy: f32,
     seed: u32,
+    /// per seat: combo / chain heat (0..1), the board's hard-drop dip, a garbage shove,
+    /// and a white flash after a big clear
+    pub heat: [f32; 6],
+    pub kick: [f32; 6],
+    pub shove: [f32; 6],
+    pub bright: [f32; 6],
+    marks: Vec<Mark>,
+    /// the falling piece as last drawn, per seat
+    pub last: [Option<Landing>; 6],
+    clock: f32,
 }
 impl Fx {
     pub fn new() -> Self {
-        Fx { particles: Vec::new(), callouts: Vec::new(), shake: 0.0, flash: [0.0; 6], energy: 0.0, seed: 77 }
+        Fx {
+            particles: Vec::new(),
+            callouts: Vec::new(),
+            shake: 0.0,
+            flash: [0.0; 6],
+            energy: 0.0,
+            seed: 77,
+            heat: [0.0; 6],
+            kick: [0.0; 6],
+            shove: [0.0; 6],
+            bright: [0.0; 6],
+            marks: Vec::new(),
+            last: Default::default(),
+            clock: 0.0,
+        }
     }
     fn rnd(&mut self) -> f32 {
         self.seed = self.seed.wrapping_mul(1664525).wrapping_add(1013904223);
@@ -172,64 +227,145 @@ impl Fx {
             }
             let a = self.rnd() * std::f32::consts::TAU;
             let sp = (0.4 + self.rnd() * 1.8) * power;
-            let life = 0.25 + self.rnd() * 0.35;
+            let life = 0.3 + self.rnd() * 0.4;
             let size = 1.5 + self.rnd() * 2.5;
-            self.particles.push(Particle { x, y, vx: a.cos() * sp, vy: a.sin() * sp - 1.0, life, max: life, color, size });
+            self.particles.push(Particle { x, y, vx: a.cos() * sp, vy: a.sin() * sp - 1.2, life, max: life, color, size });
         }
     }
     pub fn callout(&mut self, seat: usize, text: String, color: u32, scale: i32) {
+        self.callout_at(seat, text, color, scale, None);
+    }
+    pub fn callout_at(&mut self, seat: usize, text: String, color: u32, scale: i32, at: Option<(f32, f32)>) {
         if text.is_empty() {
             return;
         }
         self.callouts.retain(|c| c.seat != seat);
-        self.callouts.push(Callout { seat, text, t: 0.0, color, scale });
+        self.callouts.push(Callout { seat, text, t: 0.0, color, scale, at });
+    }
+    fn mark(&mut self, seat: usize, kind: MarkKind, x: f32, y: f32, w: f32, color: u32, life: f32) {
+        if self.marks.len() < 400 {
+            self.marks.push(Mark { seat, kind, x, y, w, color, t: 0.0, life });
+        }
     }
     pub fn update(&mut self, dt: f32) {
         for p in self.particles.iter_mut() {
             p.x += p.vx * dt * 60.0;
             p.y += p.vy * dt * 60.0;
-            p.vy += 0.04 * dt * 60.0;
-            p.vx *= 0.93;
-            p.vy *= 0.93;
+            p.vy += 0.09 * dt * 60.0;
+            p.vx *= 0.94;
+            p.vy *= 0.96;
             p.life -= dt;
         }
         self.particles.retain(|p| p.life > 0.0);
         for c in self.callouts.iter_mut() {
             c.t += dt;
         }
-        self.callouts.retain(|c| c.t < 1.4);
-        self.shake *= 0.85;
-        for f in self.flash.iter_mut() {
-            *f *= 0.9;
+        self.callouts.retain(|c| c.t < 1.5);
+        for mk in self.marks.iter_mut() {
+            mk.t += dt;
         }
+        self.marks.retain(|mk| mk.t < mk.life);
+        self.shake *= 0.85;
+        let k = (-dt * 13.0).exp();
+        for i in 0..6 {
+            self.flash[i] *= 0.9;
+            self.heat[i] = (self.heat[i] - dt * 0.22).max(0.0);
+            self.kick[i] *= k;
+            self.shove[i] *= (-dt * 7.0).exp();
+            self.bright[i] *= (-dt * 6.0).exp();
+        }
+        self.clock += dt;
         self.energy *= 0.995;
+    }
+    /// The board's offset this frame: a dip after a hard drop, a wobble when garbage lands.
+    pub fn offset(&self, i: usize) -> (i32, i32) {
+        ((self.shove[i] * (self.clock * 48.0).sin()) as i32, self.kick[i] as i32)
     }
     pub fn draw(&self, cv: &mut Canvas, geoms: &[Geom; 6]) {
         for p in &self.particles {
             let a = (p.life / p.max * 255.0) as u32;
-            cv.glow(p.x, p.y, p.size * 3.0, p.color, a / 3);
-            cv.circle(p.x, p.y, p.size * 0.6, lighten(p.color, 120), a);
+            // a spark: a short streak along its motion with a hot core
+            cv.glow(p.x, p.y, p.size * 3.2, p.color, a / 4);
+            cv.line(p.x - p.vx * 1.6, p.y - p.vy * 1.6, p.x, p.y, p.size * 0.7, lighten(p.color, 90), a * 3 / 4);
+            cv.circle(p.x, p.y, p.size * 0.55, lighten(p.color, 170), a);
         }
         for c in &self.callouts {
             let g = geoms[c.seat];
             if g.cell == 0 {
                 continue;
             }
-            let rise = (c.t * 30.0) as i32;
-            let a = if c.t > 1.0 { ((1.4 - c.t) / 0.4 * 255.0) as u32 } else { 255 };
-            let cx = g.fx + g.cols * g.cell / 2;
-            let y = g.fy + g.rows * g.cell / 3 - rise;
-            let mut sc = c.scale;
-            while sc > 1 && Canvas::text_w(&c.text, sc) > g.cols * g.cell + g.cell * 2 {
-                sc -= 1;
-            }
+            // pop in big, settle with a little overshoot, hold, then drift up and fade
+            let t = c.t;
+            let pop = if t < 0.12 {
+                1.55 - 0.65 * (t / 0.12)
+            } else if t < 0.24 {
+                0.9 + 0.1 * ((t - 0.12) / 0.12)
+            } else {
+                1.0
+            };
+            let a = if t > 1.1 { ((1.5 - t) / 0.4 * 255.0).max(0.0) as u32 } else { 255 };
+            let rise = if t > 0.6 { (t - 0.6) * 34.0 } else { 0.0 };
+            let (cx, cy) = match c.at {
+                Some((x, y)) => (g.fx as f32 + x, g.fy as f32 + y),
+                None => ((g.fx + g.cols * g.cell / 2) as f32, (g.fy + g.rows * g.cell / 3) as f32),
+            };
             let txt = crate::ui::nice(&c.text);
-            let w = Canvas::text_wb(&txt, sc, Weight::Black);
-            let x0 = cx - w / 2;
-            for (dx, dy) in [(-2, 0), (2, 0), (0, -2), (0, 2), (-2, -2), (2, 2), (-2, 2), (2, -2), (0, 3)] {
-                cv.text_weight(x0 + dx, y + dy, &txt, sc, 0xFF0A_0E1E, a * 3 / 4, Weight::Black);
+            let mut px = Canvas::px(c.scale);
+            let maxw = (g.cols * g.cell) as f32 * 1.05;
+            while px > 10.0 && crate::font::measure(&txt, px, Weight::Black) > maxw {
+                px -= 1.0;
             }
-            cv.text_weight(x0, y, &txt, sc, c.color, a, Weight::Black);
+            let px = px * pop;
+            let w = crate::font::measure(&txt, px, Weight::Black);
+            let fwf = (g.cols * g.cell) as f32;
+            // keep it over its own board; a callout wider than the board stays centred on it
+            let (lo, hi) = (g.fx as f32 - g.cell as f32 * 0.4, g.fx as f32 + fwf - w + g.cell as f32 * 0.4);
+            let x0 = if hi >= lo { (cx - w / 2.0).clamp(lo, hi) } else { g.fx as f32 + (fwf - w) / 2.0 };
+            let base = cy - rise + px * 0.3;
+            cv.glow(x0 + w / 2.0, base - px * 0.35, w * 0.55 + 12.0, c.color, a / 4);
+            let o = (px / 14.0).max(1.5);
+            for (dx, dy) in [(-1.0, 0.0), (1.0, 0.0), (0.0, -1.0), (0.0, 1.0), (-0.7, -0.7), (0.7, 0.7), (-0.7, 0.7), (0.7, -0.7), (0.0, 1.6)] {
+                crate::font::draw(cv, x0 + dx * o, base + dy * o, &txt, px, Weight::Black, 0xFF0A_0E1E, a * 4 / 5);
+            }
+            crate::font::draw(cv, x0, base, &txt, px, Weight::Black, c.color, a);
+            // a bright sheen on the upper half of the letters
+            cv.set_clip(x0 as i32 - 2, (base - px * 0.74) as i32, w as i32 + 4, (px * 0.3) as i32);
+            crate::font::draw(cv, x0, base, &txt, px, Weight::Black, lighten(c.color, 150), a / 2);
+            cv.reset_clip();
+        }
+    }
+    /// Lock flashes, drop trails and shockwaves (drawn inside the well, over the pieces).
+    fn draw_marks(&self, cv: &mut Canvas, seat: usize, g: &Geom) {
+        for mk in self.marks.iter().filter(|m| m.seat == seat) {
+            let k = 1.0 - mk.t / mk.life;
+            let (x, y) = (g.fx as f32 + mk.x, g.fy as f32 + mk.y);
+            match mk.kind {
+                MarkKind::Flash => {
+                    let w = mk.w as i32;
+                    cv.round_rect(x as i32 + 1, y as i32 + 1, w - 2, w - 2, w / 5, 0xFFFF_FFFF, (k * k * 210.0) as u32);
+                }
+                MarkKind::Streak(y0) => {
+                    let top = g.fy as f32 + y0;
+                    let len = (y - top).max(0.0);
+                    if len < 1.0 {
+                        continue;
+                    }
+                    let steps = 8;
+                    for s in 0..steps {
+                        let f = s as f32 / steps as f32;
+                        let yy = top + len * f;
+                        let a = (k * f * f * 120.0) as u32;
+                        let inset = mk.w * (0.18 + 0.12 * (1.0 - f));
+                        cv.rect_a((x + inset) as i32, yy as i32, (mk.w - inset * 2.0) as i32, (len / steps as f32).ceil() as i32 + 1, mk.color, a);
+                    }
+                    cv.rect_a((x + mk.w * 0.45) as i32, top as i32, (mk.w * 0.1).max(1.0) as i32, len as i32, 0xFFFF_FFFF, (k * 90.0) as u32);
+                }
+                MarkKind::Ring(r) => {
+                    let rr = r * (0.25 + 0.75 * (1.0 - k * k));
+                    cv.ring(x, y, rr, 2.0 + 5.0 * k, mk.color, (k * 200.0) as u32);
+                    cv.ring(x, y, rr * 0.8, 1.5, 0xFFFF_FFFF, (k * 120.0) as u32);
+                }
+            }
         }
     }
 }
@@ -249,7 +385,9 @@ fn side_w(bw: i32) -> i32 {
 /// Space kept left and right of the well: garbage meter (and Quad's Hold) | the side column.
 fn gutters(style: Style, bw: i32) -> (i32, i32) {
     let sw = side_w(bw);
-    (26 + if style == Style::Quad { sw + 6 } else { 0 }, 18 + sw + 2)
+    let f = frame_w(bw);
+    let _ = style_dims(style);
+    (f + 19 + if style == Style::Quad { sw + 2 } else { 0 }, f + 8 + sw + 2)
 }
 /// Space kept above and below the well, the nameplate height and its lift above the well.
 /// When any Quad board plays, every plate is lifted clear of Quad's two spawn rows so the
@@ -258,8 +396,9 @@ fn vert(bw: i32, any_quad: bool) -> (i32, i32, i32, i32) {
     let big = bw >= 200;
     let plate_h = if big { 50 } else { 34 };
     let pop = if big { 26 } else { 16 };
-    let lift = if any_quad { bw / 5 + 6 } else { 14 };
-    (pop + plate_h + lift, 8 + 8 + if big { 30 } else { 20 } + 4, plate_h, lift)
+    let f = frame_w(bw);
+    let lift = if any_quad { (bw / 5 + 8).max(f + 10) } else { f + 10 };
+    (pop + plate_h + lift, f + 10 + if big { 30 } else { 20 } + 6, plate_h, lift)
 }
 fn block_w(style: Style, bw: i32) -> i32 {
     let (l, r) = gutters(style, bw);
@@ -387,46 +526,171 @@ pub struct View<'a> {
     pub paused_label: Option<&'a str>,
 }
 
+const WELL_PAD: i32 = 34;
+
+/// Thickness of the coloured frame around a well, and the frame plus its ink outline.
+fn bezel_t(fw: i32) -> i32 {
+    (fw / 22).clamp(7, 14)
+}
+fn frame_w(fw: i32) -> i32 {
+    bezel_t(fw) + 3
+}
+/// The ink of the logo: every toy-like part of the match HUD is outlined in it.
+const INK: u32 = 0xFF24_1A3C;
+const CREAM: u32 = 0xFFFF_F6D6;
+
+/// Each style's colour.
+pub fn style_accent(s: Style) -> u32 {
+    match s {
+        Style::Quad => CYAN,
+        Style::Chain => GREEN,
+        Style::Capsule => PINK,
+        Style::Panel => YELLOW,
+    }
+}
+
+/// The cabinet around a well: a glossy gunmetal bezel lit from above with a neon inlay in the
+/// style's colour and corner pieces, then deep glass inside with a faint pattern per style, a
+/// reflection, side shading and a glow at the floor. Painted in real pixels at scale `k`,
+/// offset by WELL_PAD.
+#[allow(clippy::too_many_arguments)]
+fn paint_well(k: f32, fw: i32, fh: i32, cell: i32, cols: i32, rows: i32, style: Style, accent: u32, r: i32) -> Canvas {
+    let p = WELL_PAD;
+    let mut c = Canvas::new(((fw + 2 * p) as f32 * k).round() as i32, ((fh + 2 * p) as f32 * k).round() as i32);
+    c.k = k;
+    let t = bezel_t(fw);
+    let (ox, oy, ow, oh, orr) = (p - t, p - t, fw + 2 * t, fh + 2 * t, r + t);
+    c.soft_shadow(ox - 3, oy + 6, ow + 6, oh + 6, orr + 3, 14, 210);
+    // ink outline, then a chunky frame in the style's colour lit from above
+    c.round_rect(ox - 3, oy - 3, ow + 6, oh + 6, orr + 3, INK, 255);
+    c.round_grad(ox, oy, ow, oh, orr, lighten(accent, 60), darken(accent, 60), 255);
+    c.round_ring(ox, oy, ow, oh, orr, 2, lighten(accent, 170), darken(accent, 90), 255);
+    // the logo's gloss: a bar and a dot along the top edge, a shorter bar down the left side
+    let gb = (t / 3).max(2);
+    let run = ow - 2 * orr;
+    c.round_rect(ox + orr, oy + 3, run * 3 / 5, gb, gb / 2 + 1, 0xFFFF_FFFF, 190);
+    c.round_rect(ox + orr + run * 3 / 5 + gb * 2, oy + 3, gb * 2, gb, gb / 2 + 1, 0xFFFF_FFFF, 190);
+    c.round_rect(ox + 3, oy + orr, gb, (oh - 2 * orr) / 4, gb / 2 + 1, 0xFFFF_FFFF, 110);
+    // cream screws in the corners
+    // on the frame's centre line, half way round each corner's curve
+    let k = ((orr as f32 - t as f32 / 2.0) * std::f32::consts::FRAC_1_SQRT_2) as i32;
+    let (l, tp, rt, bm) = (ox + orr - k, oy + orr - k, ox + ow - orr + k, oy + oh - orr + k);
+    for (cx, cy) in [(l, tp), (rt, tp), (l, bm), (rt, bm)] {
+        let rs = t as f32 * 0.30;
+        c.circle(cx as f32, cy as f32, rs + 1.5, INK, 255);
+        c.circle(cx as f32, cy as f32, rs, CREAM, 255);
+        c.line(cx as f32 - rs * 0.55, cy as f32 + rs * 0.55, cx as f32 + rs * 0.55, cy as f32 - rs * 0.55, (rs * 0.35).max(1.0), darken(CREAM, 90), 255);
+    }
+    let _ = style;
+    // the inner lip and the well
+    c.round_rect(p - 3, p - 3, fw + 6, fh + 6, r + 1, INK, 255);
+    c.round_grad(p, p, fw, fh, r - 2, 0xFF14_1A3E, 0xFF06_0814, 255);
+    c.set_clip(p, p, fw, fh);
+    match style {
+        Style::Quad => {
+            for x in (0..cols).step_by(2) {
+                c.rect_a(p + x * cell, p, cell, fh, 0xFFFF_FFFF, 5);
+            }
+            let tk = (cell / 9).max(2);
+            for x in 1..cols {
+                for y in 1..rows {
+                    let (px, py) = (p + x * cell, p + y * cell);
+                    c.rect_a(px - tk, py, tk * 2 + 1, 1, 0xFF8C_A6FF, 28);
+                    c.rect_a(px, py - tk, 1, tk * 2 + 1, 0xFF8C_A6FF, 28);
+                }
+            }
+        }
+        Style::Chain => {
+            // a soft honeycomb of dots, like light through bubble glass
+            for y in 0..rows {
+                for x in 0..cols {
+                    let off = if y % 2 == 0 { 0.0 } else { 0.5 };
+                    let (cx, cy) = (p as f32 + (x as f32 + 0.5 + off) * cell as f32, p as f32 + (y as f32 + 0.5) * cell as f32);
+                    c.circle(cx, cy, cell as f32 * 0.09, lighten(accent, 60), 16);
+                }
+            }
+        }
+        Style::Capsule => {
+            // a measuring bottle: graduation marks down both sides
+            for y in 1..rows * 2 {
+                let long = y % 4 == 0;
+                let len = if long { cell / 2 } else { cell / 4 };
+                let a = if long { 60 } else { 34 };
+                let yy = p + y * cell / 2;
+                c.rect_a(p + 3, yy, len, 1, 0xFFFF_D8EE, a);
+                c.rect_a(p + fw - 3 - len, yy, len, 1, 0xFFFF_D8EE, a);
+            }
+            for x in (0..cols).step_by(2) {
+                c.rect_a(p + x * cell, p, cell, fh, 0xFFFF_FFFF, 4);
+            }
+        }
+        Style::Panel => {
+            // a soft checkerboard stage
+            for y in 0..rows {
+                for x in 0..cols {
+                    if (x + y) % 2 == 0 {
+                        c.rect_a(p + x * cell, p + y * cell, cell, cell, 0xFFFF_FFFF, 6);
+                    }
+                }
+            }
+        }
+    }
+    // shade under the top edge and down the sides, a glow of the style's colour at the floor
+    for i in 0..6 {
+        c.rect_a(p, p + i * 3, fw, 3, 0xFF00_0000, (80 - i * 13) as u32);
+    }
+    let sv = (cell / 4).max(3);
+    for i in 0..3 {
+        c.rect_a(p + i * sv, p, sv, fh, 0xFF00_0000, (36 - i * 12) as u32);
+        c.rect_a(p + fw - (i + 1) * sv, p, sv, fh, 0xFF00_0000, (36 - i * 12) as u32);
+    }
+    for i in 0..10 {
+        c.rect_a(p, p + fh - (i + 1) * fh / 40, fw, fh / 40, accent, (30 - i * 3) as u32);
+    }
+    c.reset_clip();
+    // the inner ink rim goes on last: its rounded inside masks the shading in the corners
+    c.round_ring(p - 3, p - 3, fw + 6, fh + 6, r + 1, 3, INK, INK, 255);
+    c
+}
+
+/// The stage each board stands on, baked into the match backdrop: a coloured spotlight, a pool
+/// of light and a shadow on the floor, and a dark station panel that holds the board, its side
+/// boxes, its nameplate and its stats together.
+pub fn paint_arena(cv: &mut Canvas, m: &Match, geoms: &[Geom; 6]) {
+    // focus the eye on the boards: darken the top and bottom edges of the screen
+    for i in 0..10 {
+        cv.rect_a(0, 40 + i * 8, W, 8, 0xFF02_0410, (60 - i * 6) as u32);
+        cv.rect_a(0, H - (i + 1) * 10, W, 10, 0xFF02_0410, (90 - i * 9) as u32);
+    }
+    for (i, g) in geoms.iter().enumerate() {
+        if g.cell == 0 || m.seats[i].board.is_none() {
+            continue;
+        }
+        let accent = style_accent(m.seats[i].cfg.profile.style());
+        let (fw, fh) = (g.cols * g.cell, g.rows * g.cell);
+        let big = fw >= 200;
+        let pill_h = if big { 30 } else { 20 };
+        let bt = bezel_t(fw);
+        let top = g.fy - g.lift - g.plate_h - 12;
+        let bot = g.fy + fh + bt + 10 + pill_h + 12;
+        let (x0, x1) = (g.x - 6, g.x + g.w + 6);
+        let (cx, cy) = ((g.fx + fw / 2) as f32, (g.fy + fh / 2) as f32);
+        // a backlight in the style's colour and a shadow on the floor
+        cv.glow(cx, cy, fh as f32 * 0.8, accent, 46);
+        cv.glow(cx, g.fy as f32 + fh as f32 * 0.15, fw as f32 * 1.0, 0xFFFF_FFFF, 10);
+        let pw = (x1 - x0) as f32;
+        cv.ellipse(cx, bot as f32 - 4.0, pw * 0.48, 14.0, 0xFF00_0000, 120);
+        cv.ellipse(cx, bot as f32 - 6.0, pw * 0.36, 7.0, accent, 46);
+        let _ = top;
+    }
+}
+
 pub struct Renderer {
     pub sprites: Sprites,
     pub scene: Scene,
     pub fx: Fx,
     pub geoms: [Geom; 6],
     wells: std::collections::HashMap<(i32, i32, i32, u32, u32), Canvas>,
-}
-
-const WELL_PAD: i32 = 26;
-
-/// The glass cabinet around a well: drop shadow, neon edge, deep glass with column lanes,
-/// shading under the top and a glow at the floor, and small ticks at the grid corners.
-/// Painted in real pixels at scale `k`, offset by WELL_PAD.
-#[allow(clippy::too_many_arguments)]
-fn paint_well(k: f32, fw: i32, fh: i32, cell: i32, cols: i32, rows: i32, accent: u32, r: i32) -> Canvas {
-    let p = WELL_PAD;
-    let mut c = Canvas::new(((fw + 2 * p) as f32 * k).round() as i32, ((fh + 2 * p) as f32 * k).round() as i32);
-    c.k = k;
-    c.soft_shadow(p - 6, p - 6, fw + 12, fh + 12, r + 4, 9, 150);
-    c.round_ring(p - 5, p - 5, fw + 10, fh + 10, r + 3, 3, lighten(accent, 90), darken(accent, 30), 255);
-    c.round_ring(p - 2, p - 2, fw + 4, fh + 4, r, 2, 0xFF04_0610, 0xFF04_0610, 255);
-    c.round_grad(p, p, fw, fh, r - 2, 0xFF0E_1430, 0xFF05_0712, 255);
-    for x in (0..cols).step_by(2) {
-        c.rect_a(p + x * cell, p, cell, fh, 0xFFFF_FFFF, 5);
-    }
-    for i in 0..6 {
-        c.rect_a(p, p + i * 3, fw, 3, 0xFF00_0000, (70 - i * 11) as u32);
-    }
-    for i in 0..8 {
-        c.rect_a(p, p + fh - (i + 1) * fh / 40, fw, fh / 40, accent, (22 - i * 2) as u32);
-    }
-    let t = (cell / 9).max(2);
-    for x in 1..cols {
-        for y in 1..rows {
-            let (px, py) = (p + x * cell, p + y * cell);
-            c.rect_a(px - t, py, t * 2 + 1, 1, 0xFF8C_A6FF, 26);
-            c.rect_a(px, py - t, 1, t * 2 + 1, 0xFF8C_A6FF, 26);
-        }
-    }
-    c
 }
 
 impl Renderer {
@@ -455,15 +719,57 @@ impl Renderer {
                 Ev::Clear { power, text } => {
                     let l = look(st.theme);
                     let scale = ((g.cell / 10).max(1) + if *power >= 6 { 1 } else { 0 }).min(5);
-                    self.fx.callout(s, text.clone(), if *power >= 4 { l.accent } else { l.text }, scale);
+                    // the callout pops where the clear happened
+                    let at = m.seats[s].board.as_ref().and_then(|b| hot_spot(b, &g));
+                    self.fx.callout_at(s, text.clone(), if *power >= 4 { l.accent } else { l.text }, scale, at);
                     self.fx.energy = (self.fx.energy + *power as f32 * 0.06).min(1.0);
+                    self.fx.heat[s] = (self.fx.heat[s] + *power as f32 * 0.07).min(1.0);
+                    if *power >= 4 && cap > 0 {
+                        let (x, y) = at.unwrap_or(((g.cols * g.cell) as f32 / 2.0, (g.rows * g.cell) as f32 / 2.0));
+                        let col = match style {
+                            Style::Quad => CYAN,
+                            Style::Chain => GREEN,
+                            Style::Capsule => PINK,
+                            Style::Panel => YELLOW,
+                        };
+                        self.fx.mark(s, MarkKind::Ring((g.cols * g.cell) as f32 * 0.7), x, y, 0.0, col, 0.5);
+                        self.fx.bright[s] = (*power as f32 / 10.0).min(1.0);
+                    }
                     if st.shake && *power >= 6 {
                         self.fx.shake = 6.0;
                     }
                 }
+                Ev::HardDrop if cap > 0 => {
+                    // a trail from where the piece was down to where it landed, and a dip
+                    if let Some(ld) = self.fx.last[s].clone() {
+                        let c = g.cell as f32;
+                        for &(x, y) in &ld.cells {
+                            if ld.cells.contains(&(x, y - 1)) {
+                                continue;
+                            }
+                            let top = ld.now.iter().filter(|p| p.0 == x).map(|p| p.1).min().unwrap_or(y);
+                            self.fx.mark(s, MarkKind::Streak(top as f32 * c), x as f32 * c, y as f32 * c, c, ld.color, 0.28);
+                        }
+                    }
+                    self.fx.kick[s] = (g.cell as f32 / 4.0).max(3.0);
+                }
+                Ev::Lock { .. } if cap > 0 => {
+                    if let Some(ld) = self.fx.last[s].clone() {
+                        let c = g.cell as f32;
+                        for &(x, y) in &ld.cells {
+                            self.fx.mark(s, MarkKind::Flash, x as f32 * c, y as f32 * c, c, 0xFFFF_FFFF, 0.22);
+                        }
+                    }
+                    self.fx.kick[s] = self.fx.kick[s].max(1.5);
+                }
                 Ev::AllClear => self.fx.callout(s, "ALL CLEAR!".into(), look(st.theme).good, (g.cell / 9).max(2)),
                 Ev::LevelClear => self.fx.callout(s, "BOTTLE CLEAR!".into(), look(st.theme).good, (g.cell / 9).max(2)),
-                Ev::GarbageLand { .. } => self.fx.flash[s] = 1.0,
+                Ev::GarbageLand { .. } => {
+                    self.fx.flash[s] = 1.0;
+                    if !st.reduce_motion {
+                        self.fx.shove[s] = (g.cell as f32 / 5.0).max(2.0);
+                    }
+                }
                 Ev::Ko { .. } => {
                     let (cx, cy) = (g.fx as f32 + (g.cols * g.cell) as f32 / 2.0, g.fy as f32 + (g.rows * g.cell) as f32 / 2.0);
                     self.fx.burst(cx, cy, look(st.theme).warn, 40, 3.0, cap);
@@ -476,6 +782,13 @@ impl Renderer {
     pub fn draw_match(&mut self, cv: &mut Canvas, m: &Match, v: &View, area: (i32, i32, i32, i32)) {
         self.sprites.set_scale(cv.k);
         self.geoms = layout(m, &v.humans, area);
+        if !v.settings.reduce_motion {
+            for i in 0..6 {
+                let (dx, dy) = self.fx.offset(i);
+                self.geoms[i].fx += dx;
+                self.geoms[i].fy += dy;
+            }
+        }
         let st = v.settings;
         let n_active = m.active_count();
         for i in 0..6 {
@@ -525,13 +838,21 @@ impl Renderer {
             if self.wells.len() > 24 {
                 self.wells.clear();
             }
-            let wc = self.wells.entry(key).or_insert_with(|| paint_well(cv.k, fw, fh, cell, g.cols, g.rows, accent, r));
+            let wc = self.wells.entry(key).or_insert_with(|| paint_well(cv.k, fw, fh, cell, g.cols, g.rows, style, accent, r));
             cv.blit(wc, g.fx - WELL_PAD, g.fy - WELL_PAD, 255);
             // the halo stays live: it breathes red when the stack is in danger
             let edge = if danger { mix(accent, l.warn, (120.0 + 135.0 * pulse) as u32) } else { accent };
-            cv.round_ring(g.fx - 9, g.fy - 9, fw + 18, fh + 18, r + 7, 5, edge, edge, if danger { (40.0 + 50.0 * pulse) as u32 } else { 34 });
+            let bt = frame_w(g.cols * cell);
+            let heat = self.fx.heat[i];
+            let halo = if danger { (50.0 + 70.0 * pulse) as u32 } else { (heat * 150.0) as u32 };
+            if halo > 4 {
+                cv.round_ring(g.fx - bt - 5, g.fy - bt - 5, fw + 2 * bt + 10, fh + 2 * bt + 10, r + bt + 5, 6, edge, edge, halo);
+            }
             if danger {
-                cv.round_ring(g.fx - 5, g.fy - 5, fw + 10, fh + 10, r + 3, 3, lighten(edge, 90), darken(edge, 30), (120.0 + 120.0 * pulse) as u32);
+                cv.round_ring(g.fx - bt + 3, g.fy - bt + 3, fw + 2 * bt - 6, fh + 2 * bt - 6, r + bt - 3, 3, lighten(edge, 80), edge, (120.0 + 120.0 * pulse) as u32);
+            }
+            if self.fx.bright[i] > 0.02 && !st.reduce_motion {
+                cv.rect_a(g.fx, g.fy, fw, fh, 0xFFFF_FFFF, (self.fx.bright[i] * 50.0) as u32);
             }
         } else {
             cv.frame(g.fx - 2, g.fy - 2, fw + 4, fh + 4, 2, if danger { l.warn } else if st.theme == ThemeId::Phosphor { l.dim } else { hex(0x555C6E) }, 255);
@@ -559,11 +880,13 @@ impl Renderer {
         }
         let _s = crate::prof::scope("S:pieces");
         match board {
-            Board::Quad(q) => self.draw_quad(cv, q, &g, faces, flat, st, v.ghost_on),
+            Board::Quad(q) => self.draw_quad(cv, i, q, &g, faces, flat, st, v.ghost_on),
             Board::Chain(c) => self.draw_chain(cv, c, &g, faces, flat, st, v.t),
-            Board::Capsule(c) => self.draw_capsule(cv, c, &g, faces, flat, st, v.t),
+            Board::Capsule(c) => self.draw_capsule(cv, i, c, &g, faces, flat, st, v.t),
             Board::Panel(p) => self.draw_panel(cv, p, &g, faces, flat, st, v.t),
         }
+        cv.set_clip(g.fx, g.fy - if style == Style::Quad { cell * 2 } else { 0 }, fw, fh + if style == Style::Quad { cell * 2 } else { 0 });
+        self.fx.draw_marks(cv, i, &g);
         cv.reset_clip();
         let _s = crate::prof::scope("S:hud");
         // danger is a shape and a position, not only a tint
@@ -591,7 +914,7 @@ impl Renderer {
         let rows_tray = ((tray + per_row - 1) / per_row).min(g.rows as u32) as i32;
         let rows_trav = ((trav + per_row - 1) / per_row).min(g.rows as u32 - rows_tray as u32) as i32;
         let mw = (cell / 4).clamp(4, 8);
-        let mx = g.fx - 12 - mw;
+        let mx = g.fx - frame_w(g.cols * cell) - 5 - mw;
         cv.round_rect(mx - 1, g.fy - 1, mw + 2, fh + 2, (mw + 2) / 2, 0xFF05_0814, 200);
         if rows_trav > 0 {
             let y0 = g.fy + fh - (rows_tray + rows_trav) * cell;
@@ -610,8 +933,9 @@ impl Renderer {
         let plate_h = g.plate_h;
         let top = g.fy - g.lift - plate_h;
         let glassy = st.theme == ThemeId::Voyage && st.preset != Preset::Potato;
+        let deco = glassy.then_some(accent);
         let (plx, plw) = (g.fx - 8, fw + 16);
-        hud_plate(cv, glassy, plx, top, plw, plate_h, plate_h / 2);
+        hud_plate(cv, deco, plx, top, plw, plate_h, plate_h / 2);
         let name_col = if v.humans[i] { l.accent } else { 0xFFFF_FFFF };
         // the character: a portrait that pops out of the plate and reacts to the board
         let mut name_x = plx + plate_h / 2 - 4;
@@ -681,8 +1005,8 @@ impl Renderer {
             pairs.pop();
         }
         let pill_h = if big { 30 } else { 20 };
-        let py = g.fy + fh + 16;
-        hud_plate(cv, glassy, plx, py, plw, pill_h, pill_h / 2);
+        let py = g.fy + fh + frame_w(g.cols * cell) + 9;
+        hud_plate(cv, deco, plx, py, plw, pill_h, pill_h / 2);
         let colw = (plw - 16) / pairs.len().max(1) as i32;
         for (k, (lab, val)) in pairs.iter().enumerate() {
             let (lw, vw) = (Canvas::text_w(lab, 1), Canvas::text_wb(val, vs, Weight::Bold));
@@ -707,7 +1031,7 @@ impl Renderer {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn draw_quad(&mut self, cv: &mut Canvas, q: &qd::QuadState, g: &Geom, faces: bool, flat: bool, st: &Settings, ghost_on: bool) {
+    fn draw_quad(&mut self, cv: &mut Canvas, seat: usize, q: &qd::QuadState, g: &Geom, faces: bool, flat: bool, st: &Settings, ghost_on: bool) {
         let cell = g.cell;
         let pat = st.colorblind;
         for y in (qd::VIS0 - 2)..qd::H {
@@ -743,6 +1067,28 @@ impl Renderer {
         }
         if let Some(p) = q.cur {
             let c = theme_tint(st.theme, qd_color(p.t + 1));
+            let shape = &qd::SHAPES[p.t as usize][p.r as usize];
+            let gy = q.ghost_y().unwrap_or(p.y);
+            self.fx.last[seat] = Some(Landing {
+                cells: shape.iter().map(|&(dx, dy)| (p.x + dx, gy + dy - qd::VIS0)).collect(),
+                now: shape.iter().map(|&(dx, dy)| (p.x + dx, p.y + dy - qd::VIS0)).collect(),
+                color: c,
+            });
+            if !flat && gy > p.y {
+                // a soft light column from the piece down to where it will land
+                for &(dx, dy) in shape.iter() {
+                    if shape.contains(&(dx, dy + 1)) {
+                        continue;
+                    }
+                    let x = g.fx + (p.x + dx) * cell;
+                    let y0 = g.fy + (p.y + dy + 1 - qd::VIS0) * cell;
+                    let y1 = g.fy + (gy + dy - qd::VIS0) * cell;
+                    let h = y1 - y0;
+                    for k in 0..8 {
+                        cv.rect_a(x + 3, y0 + h * k / 8, cell - 6, (h * (k + 1) / 8) - (h * k / 8), c, 18 - k as u32 * 2);
+                    }
+                }
+            }
             if ghost_on {
                 if let Some(gy) = q.ghost_y() {
                     for &(dx, dy) in qd::SHAPES[p.t as usize][p.r as usize].iter() {
@@ -763,20 +1109,21 @@ impl Renderer {
         cv.reset_clip();
         let l = look(st.theme);
         let glassy = st.theme == ThemeId::Voyage && st.preset != Preset::Potato;
+        let deco = glassy.then_some(CYAN);
         let (sw, top) = (g.side, g.fy - 8);
         let s1 = ((sw - 12) / 4).max(3);
         let s2 = (s1 * 4 / 5).max(3);
         let head = side_head(sw, "HOLD");
-        let hx = g.fx - 26 - sw;
-        side_box(cv, glassy, hx, top, sw, head + s1 * 3 + 4, "HOLD", &l);
+        let hx = g.fx - frame_w(g.cols * cell) - 19 - sw;
+        side_box(cv, deco, hx, top, sw, head + s1 * 3 + 4, "HOLD", &l);
         if let Some(h) = q.hold {
             let c = if q.hold_used { GRAY } else { theme_tint(st.theme, qd_color(h + 1)) };
             self.mini_piece(cv, h, hx, top + head, sw, s1 * 3, s1, c, pat, flat);
         }
-        let nx = g.fx + g.cols * cell + 18;
+        let nx = g.fx + g.cols * cell + frame_w(g.cols * cell) + 8;
         let n = q.cfg.preview.min(q.queue.len()) as i32;
         if n > 0 {
-            side_box(cv, glassy, nx, top, sw, head + s1 * 3 + (n - 1) * s2 * 3 + 4, "NEXT", &l);
+            side_box(cv, deco, nx, top, sw, head + s1 * 3 + (n - 1) * s2 * 3 + 4, "NEXT", &l);
             for (k, &t) in q.queue.iter().take(n as usize).enumerate() {
                 let c = theme_tint(st.theme, qd_color(t + 1));
                 let (s, y) = if k == 0 { (s1, top + head) } else { (s2, top + head + s1 * 3 + (k as i32 - 1) * s2 * 3) };
@@ -896,15 +1243,16 @@ impl Renderer {
         }
         cv.reset_clip();
         let glassy = st.theme == ThemeId::Voyage && st.preset != Preset::Potato;
+        let deco = glassy.then_some(GREEN);
         let (sw, top) = (g.side, g.fy - 8);
-        let nx = g.fx + g.cols * cell + 18;
+        let nx = g.fx + g.cols * cell + frame_w(g.cols * cell) + 8;
         let s1 = cell.min(sw - 14).max(4);
         let s2 = (s1 * 3 / 4).max(4);
         let head = side_head(sw, "NEXT");
         let pairs = c.next_pairs();
         let gap = (s1 / 4).max(3);
         let bh = head + s1 * 2 + (pairs.len() as i32 - 1).max(0) * (s2 * 2 + gap) + 6;
-        side_box(cv, glassy, nx, top, sw, bh, "NEXT", &l);
+        side_box(cv, deco, nx, top, sw, bh, "NEXT", &l);
         for (k, (a, b)) in pairs.iter().enumerate() {
             let s = if k == 0 { s1 } else { s2 };
             let y0 = top + head + if k == 0 { 0 } else { s1 * 2 + gap + (k as i32 - 1) * (s2 * 2 + gap) };
@@ -915,12 +1263,12 @@ impl Renderer {
             }
         }
         if c.all_clear_bonus {
-            side_value(cv, glassy, nx, top + bh + 8, sw, "BONUS", "+30", None, l.good, &l);
+            side_value(cv, deco, nx, top + bh + 8, sw, "BONUS", "+30", None, l.good, &l);
         }
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn draw_capsule(&mut self, cv: &mut Canvas, c: &cap::CapsuleState, g: &Geom, faces: bool, flat: bool, st: &Settings, t: f32) {
+    fn draw_capsule(&mut self, cv: &mut Canvas, seat: usize, c: &cap::CapsuleState, g: &Geom, faces: bool, flat: bool, st: &Settings, t: f32) {
         let cell = g.cell;
         let frame = ((t * 3.0) as i32 % 2) as u8;
         let flash_on = ((t * 12.0) as i32) % 2 == 0;
@@ -952,6 +1300,8 @@ impl Renderer {
             }
         }
         if let Some(p) = c.pill {
+            let cells: Vec<(i32, i32)> = p.cells().iter().map(|&(x, y, _, _)| (x, y - cap::VIS0)).collect();
+            self.fx.last[seat] = Some(Landing { now: cells.clone(), cells, color: 0xFFFF_FFFF });
             for (x, y, col, k) in p.cells() {
                 let kind = match k {
                     cap::K_LEFT => CellKind::HalfL,
@@ -967,12 +1317,13 @@ impl Renderer {
         cv.reset_clip();
         let l = look(st.theme);
         let glassy = st.theme == ThemeId::Voyage && st.preset != Preset::Potato;
+        let deco = glassy.then_some(PINK);
         let (sw, top) = (g.side, g.fy - 8);
-        let nx = g.fx + g.cols * cell + 18;
+        let nx = g.fx + g.cols * cell + frame_w(g.cols * cell) + 8;
         let s = cell.min((sw - 12) / 2).max(4);
         let head = side_head(sw, "NEXT");
         let bh = head + s + 8;
-        side_box(cv, glassy, nx, top, sw, bh, "NEXT", &l);
+        side_box(cv, deco, nx, top, sw, bh, "NEXT", &l);
         if let Some((a, b)) = c.preview() {
             for (j, (col, kind)) in [(a, CellKind::HalfL), (b, CellKind::HalfR)].iter().enumerate() {
                 let colr = theme_tint(st.theme, capsule_color(*col));
@@ -981,10 +1332,10 @@ impl Renderer {
             }
         }
         let mut y = top + bh + 8;
-        y = side_value(cv, glassy, nx, y, sw, "VIRUS", &format!("{}", c.viruses), None, l.accent, &l);
-        y = side_value(cv, glassy, nx, y, sw, "LEVEL", &format!("{}", c.level), Some(&crate::ui::title_case(cap::SPEED_NAMES[c.speed as usize])), l.text, &l);
+        y = side_value(cv, deco, nx, y, sw, "VIRUS", &format!("{}", c.viruses), None, l.accent, &l);
+        y = side_value(cv, deco, nx, y, sw, "LEVEL", &format!("{}", c.level), Some(&crate::ui::title_case(cap::SPEED_NAMES[c.speed as usize])), l.text, &l);
         if c.nes_seeds {
-            side_value(cv, glassy, nx, y, sw, "SEED", &format!("{:04X}", c.nes_seed), None, l.dim, &l);
+            side_value(cv, deco, nx, y, sw, "SEED", &format!("{:04X}", c.nes_seed), None, l.dim, &l);
         }
     }
 
@@ -1082,24 +1433,58 @@ impl Renderer {
         }
         cv.round_rect(cx + cell - 1, cy + cell / 4, 2, cell / 2, 1, 0xFFFF_FFFF, 90);
         let glassy = st.theme == ThemeId::Voyage && st.preset != Preset::Potato;
+        let deco = glassy.then_some(YELLOW);
         let (sw, top) = (g.side, g.fy - 8);
-        let nx = g.fx + g.cols * cell + 18;
+        let nx = g.fx + g.cols * cell + frame_w(g.cols * cell) + 8;
         let mut y = top;
         if p.puzzle {
-            y = side_value(cv, glassy, nx, y, sw, "MOVES", &format!("{}", p.moves_left.max(0)), None, l.accent, &l);
+            y = side_value(cv, deco, nx, y, sw, "MOVES", &format!("{}", p.moves_left.max(0)), None, l.accent, &l);
         } else {
-            y = side_value(cv, glassy, nx, y, sw, "LEVEL", &format!("{}", p.level), None, l.text, &l);
+            y = side_value(cv, deco, nx, y, sw, "LEVEL", &format!("{}", p.level), None, l.text, &l);
         }
         if p.chain > 1 {
-            y = side_value(cv, glassy, nx, y, sw, "CHAIN", &format!("x{}", p.chain), None, l.accent, &l);
+            y = side_value(cv, deco, nx, y, sw, "CHAIN", &format!("x{}", p.chain), None, l.accent, &l);
         }
         if p.stop > 0 {
             // the stack is held: a bar that drains as the stop time runs out
             let head = side_head(sw, "STOP");
-            side_box(cv, glassy, nx, y, sw, head + 16, "STOP", &l);
+            side_box(cv, deco, nx, y, sw, head + 16, "STOP", &l);
             let bw = sw - 16;
             cv.round_rect(nx + 8, y + head + 2, bw, 6, 3, 0xFF05_0814, 220);
             cv.round_rect(nx + 8, y + head + 2, (p.stop.min(240) as i32 * bw / 240).max(6), 6, 3, l.good, 255);
+        }
+    }
+}
+
+/// The middle of what is clearing on a board, relative to its field (for callouts and rings).
+fn hot_spot(b: &Board, g: &Geom) -> Option<(f32, f32)> {
+    let c = g.cell as f32;
+    let avg = |pts: &[(i32, i32)], vis0: i32, rise: f32| -> Option<(f32, f32)> {
+        if pts.is_empty() {
+            return None;
+        }
+        let n = pts.len() as f32;
+        let x = pts.iter().map(|p| p.0 as f32).sum::<f32>() / n;
+        let y = pts.iter().map(|p| p.1 as f32).sum::<f32>() / n;
+        Some(((x + 0.5) * c, (y - vis0 as f32 + 0.5) * c - rise - c * 0.6))
+    };
+    match b {
+        Board::Quad(q) => {
+            let pts: Vec<(i32, i32)> = q.clear_rows.iter().map(|&y| ((qd::W - 1) / 2, y)).collect();
+            avg(&pts, qd::VIS0, 0.0).map(|(_, y)| ((g.cols as f32 * c) / 2.0, y))
+        }
+        Board::Chain(ch_) => avg(&ch_.pop_cells.iter().map(|&i| (i % ch::W, i / ch::W)).collect::<Vec<_>>(), ch::VIS0, 0.0),
+        Board::Capsule(cp) => avg(&cp.clearing.iter().map(|&i| (i % cap::W, i / cap::W)).collect::<Vec<_>>(), cap::VIS0, 0.0),
+        Board::Panel(p) => {
+            let mut pts = Vec::new();
+            for y in 0..pn::H {
+                for x in 0..pn::W {
+                    if p.grid[(y * pn::W + x) as usize].s == pn::St::Match {
+                        pts.push((x, y));
+                    }
+                }
+            }
+            avg(&pts, pn::VIS0, (p.rise_sub as i32 * g.cell / pn::RISE_STEPS as i32) as f32)
         }
     }
 }
@@ -1151,13 +1536,29 @@ fn stat_pairs(m: &Match, i: usize) -> Vec<(&'static str, String)> {
     }
 }
 
-/// The backing of every HUD element: glass on Voyage, a plain dark card on the flat themes.
-fn hud_plate(cv: &mut Canvas, glassy: bool, x: i32, y: i32, w: i32, h: i32, r: i32) {
-    if glassy {
-        cv.glass(x, y, w, h, r, crate::ui::GLASS, 190);
-    } else {
+/// The backing of every HUD element. On Voyage it is a toy-like part in the logo's style: an
+/// ink outline, a rim (or a caption band `head` tall) in the style's colour, a dark inside and
+/// a gloss bar. The flat themes get a plain dark card.
+#[allow(clippy::too_many_arguments)]
+fn hud_part(cv: &mut Canvas, deco: Option<u32>, x: i32, y: i32, w: i32, h: i32, r: i32, head: i32) {
+    let Some(accent) = deco else {
         cv.round_rect(x, y, w, h, r.min(6), 0xFF0A_0E1E, 220);
-    }
+        return;
+    };
+    let r = r.min(h / 2).max(3);
+    cv.soft_shadow(x, y + 4, w, h, r, 7, 130);
+    cv.round_rect(x - 2, y - 2, w + 4, h + 4, r + 2, INK, 255);
+    cv.round_grad(x, y, w, h, r, lighten(accent, 50), darken(accent, 50), 255);
+    let inset = 3;
+    let top = if head > 0 { head } else { inset };
+    let ir = (r - inset).max(2).min((h - top - inset) / 2);
+    cv.round_grad(x + inset, y + top, w - 2 * inset, h - top - inset, ir, 0xFF1A_2148, 0xFF0B_0E22, 255);
+    let gb = if head > 0 { (head / 6).max(2) } else { 2 };
+    let gx = x + r.max(5);
+    cv.round_rect(gx, y + 2, ((w - 2 * r.max(5)) * 3 / 5).max(4), gb, gb / 2 + 1, 0xFFFF_FFFF, 170);
+}
+fn hud_plate(cv: &mut Canvas, deco: Option<u32>, x: i32, y: i32, w: i32, h: i32, r: i32) {
+    hud_part(cv, deco, x, y, w, h, r, 0);
 }
 
 /// Height of a side box's caption strip (narrow columns drop the caption).
@@ -1167,17 +1568,19 @@ fn side_head(w: i32, label: &str) -> i32 {
 
 /// A framed box in the side column with a small caption on top.
 #[allow(clippy::too_many_arguments)]
-fn side_box(cv: &mut Canvas, glassy: bool, x: i32, y: i32, w: i32, h: i32, label: &str, l: &Look) {
-    hud_plate(cv, glassy, x, y, w, h, (w / 6).clamp(5, 14));
-    let lw = Canvas::text_wb(label, 1, Weight::Bold);
+fn side_box(cv: &mut Canvas, deco: Option<u32>, x: i32, y: i32, w: i32, h: i32, label: &str, l: &Look) {
+    let head = side_head(w, label);
+    hud_part(cv, deco, x, y, w, h, (w / 6).clamp(5, 14), if head > 6 { head - 3 } else { 0 });
+    let lw = Canvas::text_wb(label, 1, Weight::Black);
     if lw <= w - 4 {
-        cv.text_weight(x + (w - lw) / 2, y + 6, label, 1, l.dim, 255, Weight::Bold);
+        let col = if deco.is_some() { INK } else { l.dim };
+        cv.text_weight(x + (w - lw) / 2, y + 5, label, 1, col, 255, Weight::Black);
     }
 }
 
 /// A captioned number in the side column (virus count, level, chain...). Returns the next y.
 #[allow(clippy::too_many_arguments)]
-fn side_value(cv: &mut Canvas, glassy: bool, x: i32, y: i32, w: i32, label: &str, value: &str, sub: Option<&str>, col: u32, l: &Look) -> i32 {
+fn side_value(cv: &mut Canvas, deco: Option<u32>, x: i32, y: i32, w: i32, label: &str, value: &str, sub: Option<&str>, col: u32, l: &Look) -> i32 {
     let head = side_head(w, label);
     let mut vs = if w >= 70 { 3 } else if w >= 44 { 2 } else { 1 };
     while vs > 1 && Canvas::text_wb(value, vs, Weight::Bold) > w - 8 {
@@ -1186,7 +1589,7 @@ fn side_value(cv: &mut Canvas, glassy: bool, x: i32, y: i32, w: i32, label: &str
     let vh = (Canvas::px(vs) * 0.92) as i32;
     let sub = sub.filter(|s| Canvas::text_w(s, 1) <= w - 6);
     let h = head + vh + if sub.is_some() { 15 } else { 0 } + 6;
-    side_box(cv, glassy, x, y, w, h, label, l);
+    side_box(cv, deco, x, y, w, h, label, l);
     let vw = Canvas::text_wb(value, vs, Weight::Bold);
     cv.text_weight(x + (w - vw) / 2, y + head - 2, value, vs, col, 255, Weight::Bold);
     if let Some(s) = sub {

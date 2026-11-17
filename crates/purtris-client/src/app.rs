@@ -275,6 +275,8 @@ pub struct App {
     scaled_maps: std::collections::HashMap<(usize, i32), (Canvas, std::sync::Arc<crate::gfx::Backdrop>)>,
     /// blurred and dimmed, keyed (world, width, dim)
     blurred_maps: std::collections::HashMap<(usize, i32, u32), (Canvas, std::sync::Arc<crate::gfx::Backdrop>)>,
+    /// the match backdrop with each board's stage baked in, keyed by world, size and layout
+    arena: Option<(String, Canvas, std::sync::Arc<crate::gfx::Backdrop>)>,
     title_zoom: std::collections::HashMap<(usize, i32), (Canvas, std::sync::Arc<crate::gfx::Backdrop>)>,
     vignette: (i32, Vec<u8>),
 }
@@ -323,6 +325,7 @@ impl App {
             boot_draw: 0.0,
             scaled_maps: std::collections::HashMap::new(),
             blurred_maps: std::collections::HashMap::new(),
+            arena: None,
             title_zoom: std::collections::HashMap::new(),
             vignette: (0, Vec::new()),
         };
@@ -437,6 +440,31 @@ impl App {
             let t = self.t;
             self.r.scene.draw(&mut self.cv, &self.st, t, 0.0);
         }
+    }
+    /// The match backdrop: the blurred world with every board's stage (spotlight, floor, station
+    /// panel) painted in once per layout, so the frame only pays for one copy.
+    fn match_bg(&mut self, m: &purtris_sim::Match, humans: &[bool; 6], area: (i32, i32, i32, i32)) {
+        if self.st.theme != ThemeId::Voyage || self.st.preset == Preset::Potato || self.maps.is_empty() {
+            self.bg_blur(70);
+            return;
+        }
+        let geoms = crate::render::layout(m, humans, area);
+        let shape: Vec<(i32, i32, i32, i32, String)> = (0..6)
+            .filter(|&i| m.seats[i].board.is_some())
+            .map(|i| (geoms[i].fx, geoms[i].fy, geoms[i].cell, geoms[i].cols, format!("{:?}", m.seats[i].cfg.profile.style())))
+            .collect();
+        let key = format!("{} {} {:?}", self.bg_world % self.maps.len(), self.cv.w, shape);
+        if self.arena.as_ref().map(|a| a.0 != key).unwrap_or(true) {
+            self.bg_blur(70);
+            let mut a = self.cv.clone();
+            a.reset_clip();
+            crate::render::paint_arena(&mut a, m, &geoms);
+            let bd = crate::gfx::Backdrop::from_image(&a);
+            self.arena = Some((key, a, bd));
+        }
+        let (_, a, bd) = self.arena.as_ref().unwrap();
+        self.cv.copy_from(a);
+        self.cv.set_backdrop(bd.clone());
     }
     /// Draw world `wi`'s rendered map over the whole screen (cached at the screen size).
     fn draw_map(&mut self, wi: usize) {
@@ -1951,9 +1979,6 @@ impl App {
         }
         let _pd = crate::prof::scope("draw");
         // draw
-        let energy = self.r.fx.energy;
-        let _ = energy;
-        self.bg_blur(70);
         let shake = if self.st.shake && !self.st.reduce_motion { self.r.fx.shake } else { 0.0 };
         let sx = (shake * ((self.t * 50.0).sin())) as i32;
         let ah = if g.training { 634 } else { 668 };
@@ -1970,6 +1995,7 @@ impl App {
         } else {
             (215 + sx, 44, 850, ah)
         };
+        self.match_bg(&g.m, &g.humans, (area.0 - sx, area.1, area.2, area.3));
         if flank {
             let shown: Vec<usize> = if crowd { vec![active[0], *active.iter().find(|&&i| !g.humans[i]).unwrap_or(&active[1])] } else { active.clone() };
             for (k, &i) in shown.iter().enumerate() {
