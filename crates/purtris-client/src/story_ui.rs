@@ -85,16 +85,18 @@ impl App {
         }
         // dialogue box with a name tab
         let voice = cast::voice(cur.who);
-        let (name, color) = voice.unwrap_or_else(|| (cast::get(cur.who).name, cast::get(cur.who).color));
+        let who_name = cast::name_of(cur.who);
+        let (name, color) = voice.unwrap_or((who_name.as_str(), cast::get(cur.who).color));
         self.cv.glass(60, 488, 1160, 196, 30, GLASS, 205);
         let nw = Canvas::text_wb(name, 3, Weight::Black) + 56;
         let nx = if on_right(cur.who) { 1190 - nw } else { 90 };
         self.cv.round_grad(nx, 462, nw, 50, 25, crate::gfx::lighten(color, 40), color, 255);
         self.cv.text_weight(nx + 28, 470, name, 3, 0xFF16_1028, 255, Weight::Black);
         // typewriter, with a beat after each sentence
-        let shown = crate::story::reveal(cur.text, (t - 0.15).max(0.0));
-        let full = cur.text.chars().count();
-        let text: String = cur.text.chars().take(shown.min(full)).collect();
+        let said = cast::say(cur.text);
+        let shown = crate::story::reveal(&said, (t - 0.15).max(0.0));
+        let full = said.chars().count();
+        let text: String = said.chars().take(shown.min(full)).collect();
         let lines = crate::gfx::wrap(&text, 1090, 3);
         for (k, ln) in lines.iter().enumerate().take(3) {
             let ink = if voice.is_some() { 0xFFFF_E7B8 } else { 0xFFF4_F6FF };
@@ -261,8 +263,8 @@ impl App {
             self.cv.text_weight(x + 20, card_y + 14, &who, 1, 0xFF14_1022, 255, Weight::Bold);
             let ny = card_y + card_h - 70;
             self.cv.rect_a(x + 2, ny - 8, w - 4, 76, 0xFF06_0A18, 150);
-            self.cv.text_weight(x + 16, ny, m.name, 3, m.color, 255, Weight::Black);
-            self.cv.text_s(x + 16, ny + 36, m.title, 1, l.text);
+            self.cv.text_weight(x + 16, ny, &cast::name_of(m.id), 3, m.color, 255, Weight::Black);
+            self.cv.text_s(x + 16, ny + 36, &cast::say(m.title), 1, l.text);
             if s.ready[i] && human {
                 let rw = Canvas::text_wb("Ready!", 2, Weight::Black) + 24;
                 self.cv.round_rect(x + w - rw - 10, card_y + 8, rw, 30, 15, l.good, 255);
@@ -289,5 +291,105 @@ impl App {
             }
         }
         Screen::Select(s)
+    }
+}
+
+// ------------------------------------------------------------------ naming the courier
+
+impl App {
+    /// Name the story's courier and pick the model (girl or boy). Shown before the prologue
+    /// the first time Story opens, and from the player card. An empty field keeps the name.
+    pub(crate) fn name_screen(&mut self, nav: &Nav, typed: String, then: Box<Screen>) -> Screen {
+        use minifb::Key;
+        let l = look(self.st.theme);
+        let mut typed = typed;
+        for c in self.input.take_typed() {
+            if typed.chars().count() < cast::HERO_MAX && (c.is_alphabetic() || matches!(c, ' ' | '-' | '\'')) {
+                typed.push(c);
+            }
+        }
+        if self.input.key_pressed(Key::Backspace) {
+            typed.pop();
+        }
+        // the model: arrow keys, the pad's left and right, or a click on either chip
+        let (x, y, w) = (560, 80, 640);
+        let chip = |k: i32| (x + 40 + k * 190, y + 262, 170, 50);
+        let mut boy = self.card.hero_boy;
+        let pad = |m: u32| (0..4).any(|i| self.input.pad_pressed(i, m));
+        if self.input.key_pressed(Key::Left) || pad(crate::input::pad::LEFT) {
+            boy = false;
+        }
+        if self.input.key_pressed(Key::Right) || pad(crate::input::pad::RIGHT) {
+            boy = true;
+        }
+        if let (Some((mx, my)), true) = (nav.mouse, nav.click) {
+            for k in 0..2 {
+                let (cx, cy, cw, ch) = chip(k);
+                if mx >= cx && mx < cx + cw && my >= cy && my < cy + ch {
+                    boy = k == 1;
+                }
+            }
+        }
+        if boy != self.card.hero_boy {
+            self.card.hero_boy = boy;
+            cast::set_hero_boy(boy);
+            self.sfx(Sfx::Menu);
+        }
+        let current = cast::hero();
+        let shown = cast::clean_hero(&typed);
+        let name = if shown.is_empty() { current.clone() } else { shown.clone() };
+        let confirm = self.input.key_pressed(Key::Enter) || pad(crate::input::pad::A);
+        let cancel = self.input.key_pressed(Key::Escape) || pad(crate::input::pad::B);
+        if confirm || cancel {
+            self.card.hero = if confirm { name.clone() } else { current.clone() };
+            self.card.save();
+            self.sfx(if confirm { Sfx::Select } else { Sfx::Back });
+            return *then;
+        }
+
+        self.bg_world = 0;
+        self.bg_blur(30);
+        let bob = if self.st.reduce_motion { 0 } else { ((self.t * 2.0).sin() * 3.0) as i32 };
+        crate::assets::draw_char_ex(&mut self.cv, "mira", if shown.is_empty() { "smile" } else { "delighted" }, 300, 1250 + bob, 1130, 255, false);
+        self.cv.glass(x, y, w, 470, 30, GLASS, 215);
+        self.cv.text_weight(x + 40, y + 34, "Who's carrying the box?", 4, 0xFFFF_FFFF, 255, Weight::Black);
+        self.cv.text_s(x + 40, y + 92, &cast::say("Name your courier and choose how {she} looks."), 2, l.dim);
+        // the name
+        let (fx, fy, fw, fh) = (x + 40, y + 140, w - 80, 86);
+        // an outline: the accent shape with the dark field inset inside it
+        self.cv.round_rect(fx, fy, fw, fh, 22, l.accent, 255);
+        self.cv.round_rect(fx + 3, fy + 3, fw - 6, fh - 6, 19, 0xFF0B_1022, 245);
+        let (txt, ink) = if shown.is_empty() { (current.as_str(), 0xFF7C_86A8) } else { (shown.as_str(), 0xFFFF_FFFF) };
+        self.cv.text_weight(fx + 28, fy + 18, txt, 5, ink, 255, Weight::Black);
+        if self.st.reduce_motion || (self.t * 2.0).fract() < 0.6 {
+            let cx = fx + 30 + if shown.is_empty() { 0 } else { Canvas::text_wb(&shown, 5, Weight::Black) };
+            self.cv.rect_a(cx, fy + 18, 4, 52, l.accent, 255);
+        }
+        let count = format!("{} / {}", shown.chars().count(), cast::HERO_MAX);
+        self.cv.text_right(fx + fw - 20, fy + fh + 10, &count, 1, l.dim);
+        // the model
+        for (k, label) in ["Girl", "Boy"].iter().enumerate() {
+            let (cx, cy, cw, ch) = chip(k as i32);
+            let on = (k == 1) == boy;
+            if on {
+                self.cv.round_grad(cx, cy, cw, ch, 25, crate::gfx::lighten(l.accent, 40), l.accent, 255);
+            } else {
+                self.cv.round_rect(cx, cy, cw, ch, 25, 0xFF5A_6488, 255);
+                self.cv.round_rect(cx + 2, cy + 2, cw - 4, ch - 4, 23, 0xFF0B_1022, 245);
+            }
+            let tw = Canvas::text_wb(label, 3, Weight::Black);
+            self.cv.text_weight(cx + (cw - tw) / 2, cy + 9, label, 3, if on { 0xFF16_1028 } else { 0xFFC8_D0E8 }, 255, Weight::Black);
+        }
+        self.cv.text_s(x + 430, y + 278, "\u{2190} \u{2192}", 2, l.dim);
+        // how it reads: a line from the first night, with the name in it
+        let (kx, ky) = (x + 40, y + 346);
+        let kai = cast::get("kai");
+        let tag = Canvas::text_wb(kai.name, 2, Weight::Black) + 36;
+        self.cv.round_grad(kx, ky, tag, 36, 18, crate::gfx::lighten(kai.color, 40), kai.color, 255);
+        self.cv.text_weight(kx + 18, ky + 6, kai.name, 2, 0xFF16_1028, 255, Weight::Black);
+        let sample = format!("You're humming it wrong, {}. You always hum it wrong.", name);
+        self.cv.text_wrap(kx, ky + 50, w - 80, &sample, 2, 0xFFF4_F6FF);
+        ui::prompts(&mut self.cv, &l, &[("Type", "Name"), ("\u{2190} \u{2192}", "Girl / Boy"), ("Enter / A", "Sign"), ("Esc / B", "Keep current")]);
+        Screen::NameHero { typed, then }
     }
 }

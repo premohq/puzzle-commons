@@ -7,13 +7,19 @@
 #   END
 # Speakers: the 19 cast ids (cast.rs), plus two voices with no body: "box" and "sena".
 # Expressions: normal smile delighted angry sad shocked smug sleepy.
-# Lines must fit three lines of the dialogue box (purtris-client --scenes checks every one).
+#
+# The courier ("mira") is named and gendered by the player. "Mira" in a line becomes the chosen
+# name. When someone talks ABOUT the courier, use the pronoun tokens, which follow the girl/boy
+# choice: {she} {She} {her} (object: her/him) {his} {His} (possessive: her/his) {herself} {girl}.
+#
+# Write plain, complete, natural English. Every line must fit three rows of the dialogue box:
+#   ./target/release/puzzle-commons --story-check <dir> 1920 [scene ids to render]
 #
 # When scenes play (app.rs):
 #   prologue                before the first visit to the story map
 #   wN_intro                arriving in world N
-#   wN_nK                   before node K (short); wN_mid plays before node 2, wN_boss before node 5
-#   wN_nK_win / wN_nK_lose  after the first win / first loss at node K
+#   wN_nK                   before node K's match; wN_mid plays before node 2, wN_boss before node 5
+#   wN_nK_win / wN_nK_lose  after the first win / first loss at node K (the loss line gives a tip)
 #   wN_clear                after first beating the champion (node 5)
 #   w4_fall, epilogue       after w4_clear
 # Spoilers for everything: see docs/story/BIBLE.md.
@@ -22,964 +28,967 @@
 
 SCENE prologue 0
 RIGHT kai
-mira delighted | Camp's up, fire's lit, box is dry. Day one of the delivery of the century: complete!
-kai sleepy | We're on the beach below your house. Your mom just waved at us from the kitchen window.
-mira smug | A good courier starts close and ends far. It's in the handbook.
-kai normal | You wrote the handbook. It's one page. Half of it is the sign-off.
-mira smile | The important half. Signed, sealed, stacked!
-kai normal | Okay. Client?
-mira normal | Me.
-kai normal | Who's paying?
-mira smile | Also me.
-kai normal | How much?
-mira normal | Everything I've got. What's for dinner?
-kai smug | Local delicacy. Pickled marshmallows from the reef market. The man cried when I bought them. Happy tears, I think.
-mira shocked | They're wet. Why are they wet? Marshmallows are not supposed to be wet, Kai!
-kai normal | Brine. It builds character. Eat around the green part.
-mira sleepy | When the Commons opens, we'll hear it from here. Every board in every world, one tune. Mm-mm-mmm, mm-mm...
+mira delighted | Tent's up, the fire's going, and the box is safe and dry. Day one of the trip is officially done!
+kai sleepy | We're camping on the beach below your house, Mira. Your mom just waved at us from the kitchen window.
+mira smug | Every great journey has to start somewhere. Mine starts close to home.
+kai normal | Okay. Tell me the plan one more time. I want to hear how it sounds out loud.
+mira smile | This box holds the last piece of the Commons board. Queen Kaede closed the Commons seven years ago, and nobody has played there since.
+mira normal | Her rule is simple. Anyone who beats the champion of every world can challenge her. If I win, the Commons opens again.
+kai normal | Four champions, one queen. And you're paying for this whole trip yourself.
+mira smile | With every coin I have. Signed, sealed, stacked!
+kai normal | You say that like it's a contract.
+mira smug | It is a contract. It's my courier sign-off. So, what's for dinner?
+kai smug | A local specialty. Pickled marshmallows from the reef market. The man at the stall almost cried when I bought them.
+mira shocked | They're wet! Why are they wet? Marshmallows are not supposed to be wet!
+kai normal | That's the pickle juice. Just eat around the green part.
+mira sleepy | Hey, Kai. Once the Commons opens, we'll hear it from here. Every board in every world, playing one tune. Mm-mm-mmm...
 kai normal | You're humming it wrong. You always hum it wrong.
-mira sleepy | That's how it goes. That's how she always... that's how it goes. Night, Kai.
+mira sleepy | That's how it goes. That's how she always... Never mind. Good night, Kai.
 box normal | Mm-mm... mm-mmm.
 kai sad | ...Same wrong note.
-kai normal | Go to sleep, box. Nobody's going anywhere fast. I'll make sure of it.
+kai normal | Go to sleep, box. We're not going anywhere fast. I'll make sure of that.
 END
 
 # =============================================================== WORLD 1: QUAD REEF (Nami)
 
 SCENE w0_intro 0
 RIGHT nami
-mira delighted | Quad Reef! Courier Mira, here to challenge the keeper of the light! I have a box, a plan, and only slightly wet shoes.
-nami normal | You're dripping on my stairs. There are two hundred and twelve of them, and you've dripped on the first four.
-kai normal | Sorry. She drips. It's a courier thing.
-nami normal | I'm Nami. I keep the light and I keep the rows clear. Both of those are full-time jobs.
-mira smile | We're reopening the Commons! I need your style, and you, at the big board. Every keeper from every world.
-nami sad | The Commons. You say it like it's a picnic.
-mira normal | It was, sort of! I was there, I was ten. It sounded like every radio in the world playing one song.
-nami normal | I know what it sounded like. I heard it from the top of this tower. I also heard it stop.
-nami smug | Lantern Shore. Twenty rows, no holes. Show me you can keep a clean ship. ...A clean stack. I meant stack.
+mira delighted | Quad Reef! Hello! I'm Mira, a courier, and I'm here to challenge the keeper of the lighthouse!
+nami normal | You're dripping on my stairs. There are two hundred and twelve of them, and you've already dripped on four.
+kai normal | Sorry. {She} jumped off the boat before it stopped.
+nami normal | I'm Nami. I keep the light burning and I keep my rows clean. Both of those are full-time jobs.
+mira smile | I need to beat you to reopen the Commons. And after that, I'd love for you to come and play there with us!
+nami sad | The Commons... You make it sound like a picnic.
+mira normal | It was like one! I went when I was ten. It sounded like every radio in the world playing the same song.
+nami normal | I remember the sound. I could hear it from the top of this tower. I also remember the day it stopped.
+nami smug | If you want a match with me, clear twenty rows on Lantern Shore first. No holes. Show me you can keep a clean ship.
+nami shocked | ...A clean stack. I meant to say stack.
 kai smug | She said ship.
-nami angry | The logbook will say stack.
+nami angry | It was a figure of speech!
 END
 
 SCENE w0_n0_win 0
 RIGHT nami
-nami normal | Twenty rows. One hole: row six, left side. You covered it and hoped I wouldn't look.
-mira smug | Did you look?
-nami smile | I always look. ...It was a very tidy hole. Come up. The kettle's on.
+nami normal | Twenty rows. You left one hole, though. Row six, on the left. You covered it up and hoped I wouldn't notice.
+mira smug | Did you notice?
+nami smile | I always notice. ...But it was a very tidy hole. Come on up. I'll put the kettle on.
 END
 
 SCENE w0_n0_lose 0
 RIGHT nami
-nami normal | Topped out. It happens. Wipe the board, breathe, go again. The light doesn't judge. I do, a little.
-mira angry | It was the long piece! It never came!
-nami normal | It always comes. You just stopped leaving a column open for it.
+nami normal | You topped out. It happens to everyone. Take a breath and try again.
+mira angry | The long piece never came!
+nami normal | It always comes eventually. Keep one column open for it, and you'll be ready when it does.
 END
 
 SCENE w0_n1 0
 RIGHT haru
-haru normal | Ferry to the outer steps. One coin or one match. Nobody on the reef carries coins, so it's usually a match.
-mira delighted | A match! Finally, a fair price.
-haru normal | Nami says you're bound for the Commons. Says you'll be home again by summer.
-kai normal | That's the plan. In and out. Very quick. Barely even leaving.
-haru sad | The last two I rowed out to the Commons said that, seven years ago. Sit down. You're rocking the boat.
-mira normal | I'm not even in the boat.
-haru smile | Then sit down on the dock. Let's see how you stack.
+haru normal | Need a ride to the outer reef? I'm Haru, the ferryman. The fare is one coin or one match.
+mira delighted | A match! Finally, a price I can afford.
+haru normal | Nami tells me you're heading for the Commons. She says you'll be home again by summer.
+kai normal | That's the plan. In and out. A quick trip.
+haru sad | The last two people I rowed toward the Commons said the same thing. That was seven years ago.
+haru normal | So before I row anyone that way again, I want to see how you play. Let's begin.
 END
 
 SCENE w0_n1_win 0
 RIGHT haru
-haru smile | You send in fours, like the old reef players did. Get in. Mind the oars.
-kai normal | Are there life jackets?
-haru normal | There's one. It's mine. Forty years, never needed it. Get in.
+haru smile | You clear four rows at a time, like the old reef players used to. Climb aboard. Mind the oars.
+kai normal | Do you have life jackets?
+haru normal | I have one. It's mine. Forty years on this boat, and I've never needed it.
 END
 
 SCENE w0_n1_lose 0
 RIGHT haru
-haru normal | Your stack leans left. Like you do. The boat will wait. Boats are very good at waiting.
+haru normal | Your stack leans to the left. Keep it flat, and every piece will have a place to go. The boat will wait.
 END
 
 SCENE w0_mid 0
 RIGHT nami
-kai sleepy | It's two in the morning. Why is the lighthouse brighter at two than it was at noon?
-nami normal | Because noon doesn't need it. Pass me the soft cloth. Not that one. That one's for the brass.
-mira smile | You polish the lens every night? By hand?
-nami normal | A smudge throws the beam two degrees off. Two degrees, and a boat misses the harbor by a mile.
-mira normal | But nobody's out there. Haru says no one's sailed past the reef in years.
-nami sad | Two people did. My parents. They took Haru's ferry to the last Commons Cup, to watch. They said keep the light on, we'll be late.
-nami normal | That was seven years ago. They are very late. So the light stays on.
-mira sad | My sister was at the final too. Sena. She wasn't watching. She was playing in it.
-nami shocked | In the final? Then she was on the big board when it...
-mira smile | She taught me to stack on a cereal box with the pieces drawn on. I was terrible. She let me win anyway.
+kai sleepy | It's two in the morning. Why is the lighthouse brighter now than it was at noon?
+nami normal | Because nobody needs a lighthouse at noon. Could you pass me the soft cloth? Not that one. That one's for the brass.
+mira smile | Do you really polish the lens every single night?
+nami normal | One smudge can bend the beam by two degrees. That's enough for a boat to miss the harbor by a mile.
+mira normal | But nobody's out there. Haru says no boat has come past the reef in years.
+nami sad | Two people went out. My mom and dad. They took Haru's ferry to the last Commons Cup to watch the final.
+nami sad | They told me to keep the light on, because they'd be home late. That was seven years ago. So I keep it on.
+mira sad | ...My big sister was at that final too. Her name is Sena. She wasn't watching it. She was playing in it.
+nami shocked | She was playing in the final? Then she was on the big board when it...
+mira smile | She taught me to stack using a cereal box with the pieces drawn on it. I was awful. She let me win anyway.
 kai normal | She didn't let you win. You cheated. You moved the pieces with your finger.
-mira angry | That was a legal move! The cereal box had no rules!
-nami smile | Thank you. For telling me. People usually just say "oh" and look at the floor.
-kai normal | I'm looking at the floor right now. For the record. It's a very clean floor.
-nami smile | Two hundred and twelve stairs, scrubbed every Sunday. ...Hold the lamp still, Mira. You're leaning.
+mira angry | That was a legal move! The cereal box didn't have any rules!
+nami smile | Thank you for telling me. Most people just say "oh" and stare at the floor.
+kai normal | For the record, I'm staring at the floor right now. It's a very clean floor.
+nami smile | I scrub all two hundred and twelve stairs every Sunday. ...Mira, please hold the lamp still. You're leaning.
 END
 
 SCENE w0_n2 0
 RIGHT sora
-sora smug | Excuse me! Has anyone broken the reef's sprint record today? No? Good. It's mine. It's still mine.
-mira normal | Who are you?
-sora delighted | Sora! Forty lines in a time I won't say out loud, because it would hurt people. Fine: it would hurt Jun.
+sora smug | Excuse me! Has anyone beaten the reef's sprint record today? No? Good. It's still mine.
+mira normal | Um... who are you?
+sora delighted | I'm Sora! I cleared forty lines faster than anyone on this reef. I won't say my time. It would hurt Jun's feelings.
 kai normal | Who's Jun?
-sora smug | A guy who used to have the record. He's followed me across three worlds. Duel me, courier. I need a warm-up.
+sora smug | The guy who had the record before me. He's been chasing me across three worlds. Anyway, play me, courier! I need a warm-up.
 END
 
 SCENE w0_n2_win 0
 RIGHT sora
-sora shocked | You cancelled my four-row with a double?! That's not... that's legal. That's completely legal. I hate it.
-mira smug | Garbage in transit can be cancelled. It's in the handbook.
-kai normal | It's not in the handbook. It is in the rules, though.
+sora shocked | You cancelled my four-row attack with a double? That's... completely legal. I hate it.
+mira smug | Garbage can be cancelled while it's still on the way. That's in my handbook.
+kai normal | {His} handbook is one page long. But it's in the real rules too.
 END
 
 SCENE w0_n2_lose 0
 RIGHT sora
-sora smug | Don't feel bad. I've beaten everyone on this reef. Twice. Jun three times, but Jun's tired, so that's barely sport.
+sora smug | Don't feel bad. I've beaten everyone on this reef. Watch the meter on the left next time. That's what's coming at you.
 END
 
 SCENE w0_n3 0
 RIGHT jun
-jun sleepy | You beat Sora. Everyone heard. He's louder losing than he is winning, which I didn't think was possible.
-mira smile | You must be Jun! The one who...
-jun angry | Who HAD the record. Yes. Thank you. I haven't slept since. I hold pieces now. I hold everything. I hold grudges.
-kai normal | That's a lot of holding.
-jun sleepy | Beat me and I'll finally go to bed. Lose, and I'll stay up all night celebrating. Honestly, I'd appreciate the loss.
+jun sleepy | So you're the courier who beat Sora. Everyone heard about it. He's even louder when he loses.
+mira smile | You must be Jun! The one who used to...
+jun angry | The one who USED to have the record. Yes. Thank you. I haven't slept since he took it.
+jun sleepy | Now I hold everything. Pieces, grudges, my breath... If you beat me, maybe I can finally get some sleep.
+kai normal | And if you win?
+jun smug | Then I'll stay up all night celebrating. So, honestly, I'm hoping I lose.
 END
 
 SCENE w0_n3_win 0
 RIGHT jun
-jun sleepy | You held the long piece for six turns. Six. Like a lighthouse. ...Okay. Bed. I'm going to bed. Right here is fine.
-kai normal | He's asleep. On the kelp. Standing up.
+jun sleepy | You held that long piece for six turns, waiting for the perfect spot. That's real patience. ...Okay. Time for bed. Right here is fine.
+kai normal | He fell asleep standing up.
 END
 
 SCENE w0_n3_lose 0
 RIGHT jun
-jun smug | Ha! Still awake! So awake! New record: longest awake. Somebody write it down. Sora, write it down!
+jun smug | I'm still awake! New record! Use your hold slot more. Save the piece you can't place yet for later.
 END
 
 SCENE w0_n4 0
 RIGHT sora
-sora angry | We're teaming up. Not because we like each other. Because you beat us both, and that's statistically insulting.
-jun sleepy | He asked me nicely. He's never asked me nicely. I was too tired to say no.
-mira delighted | Kai! You're with me. Two on two, like the cereal box days!
-kai normal | I'm bad at Quad. Statistically. Ask anyone. Ask Sora.
-sora smug | He's bad. I watched him warm up. He topped out on purpose. I mean, by accident. It looked on purpose.
-kai sad | ...It was an accident. Let's go.
+sora angry | We're teaming up! Not because we like each other. Because losing to you twice is embarrassing.
+jun sleepy | He asked me nicely. He has never asked me nicely before. I was too tired to say no.
+mira delighted | Then it's two against two! Kai, you're with me. Just like the cereal box days!
+kai normal | I should warn you. I'm really bad at Quad. Ask Sora.
+sora smug | It's true. I watched him practice. He topped out on purpose. Er, by accident. It just looked like it was on purpose.
+kai sad | ...It was an accident. Let's play.
 END
 
 SCENE w0_n4_win 0
 RIGHT kai
-mira delighted | Both of us standing! Kai, you cleared a four-row! I saw it!
-kai normal | My hand slipped. Into a four-row. It happens to everyone.
+mira delighted | We both made it! Kai, you cleared four rows at once! I saw it!
+kai normal | My hand slipped. It happens.
 mira smug | Your hand slipped on purpose. I know that face.
-kai smile | This is my only face. Come on. Nami's waiting, and the tide's turning.
+kai smile | This is the only face I have. Come on. Nami's waiting for us.
 END
 
 SCENE w0_n4_lose 0
 RIGHT kai
-kai sad | That was me. I topped out one row before you did. Sorry.
+kai sad | That was my fault. I topped out one row before you did. Sorry.
 mira normal | One row. Again. That's the third time this month you've lost by exactly one row.
-kai normal | I'm very consistent. It's my only skill.
+kai normal | I'm very consistent. It's my only talent.
 END
 
 SCENE w0_boss 0
 RIGHT nami
-nami normal | Before we play. You said every keeper goes to the Commons. Then the light goes dark.
-mira normal | Haru could keep it lit. Or we could rig a timer, or...
-nami angry | It doesn't go out. Not for one night. If they come round the reef and it's dark, they'll think nobody waited.
-mira sad | ...Then I won't ask you to leave it. I'll just ask you to play me properly. No holding back.
-nami smug | I never hold back. I hold pieces. My hold slot is called Harbor. Kai, don't.
+nami normal | Before we play, there's something you should know. If I go to the Commons, nobody will be here to keep the light on.
+mira normal | Haru could watch it for one night. Or we could set up a timer, or...
+nami angry | No. It doesn't go out. Not even for one night. If my parents sail around the reef and it's dark, they'll think nobody waited for them.
+mira sad | ...Okay. Then I won't ask you to leave. Just play me for real. Don't hold back.
+nami smug | I never hold back. I only hold pieces. My hold slot even has a name. It's called Harbor. Kai, don't say it.
 kai smug | I didn't say anything.
-nami smile | You were about to. If I win, you scrub the stairs. All two hundred and twelve. With a toothbrush.
-mira delighted | And if I win, I borrow the reef style, and you watch the stars with us from the gallery. One night. Light still on.
-nami smile | ...That is an acceptable trade. Anchors aweigh. I did not say that. Start the match.
+nami smile | You were about to. Here are the stakes. If I win, you scrub all two hundred and twelve stairs. With a toothbrush.
+mira delighted | And if I win, I get your champion's seal, and you watch the stars with us from the top of the tower. The light stays on.
+nami smile | ...That's a fair trade. All right. Anchors aweigh! ...I didn't mean to say that. Just start the match.
 END
 
 SCENE w0_n5_lose 0
 RIGHT nami
-nami normal | The toothbrush is under the sink. You played well. Your stack leans. Fix the lean and come back.
-mira angry | I do not lean!
-kai normal | You lean a bit.
+nami normal | The toothbrush is under the sink. You played well, though. Keep your stack flat and come back.
+mira angry | My stack wasn't THAT crooked!
+kai normal | It was a little crooked.
 END
 
 SCENE w0_clear 0
 RIGHT nami
-nami shocked | That last four-row. Did you hear it? The whole board rang, like the bell on the harbor buoy.
-mira delighted | That's it! That's the sound! The Commons sounded like that all the time, every board at once!
-nami smile | Then take the reef style. Straight down, clean lines. Don't make it crooked.
-kai normal | She'll make it crooked.
-mira smile | Mostly straight. Nami. The stars. You promised.
-nami normal | That's the Ferry. That's the Long Piece: four stars in a row. My mother named it. She was a very literal woman.
-mira sad | If I find the Commons, and anyone's there... what should I look for?
-nami sad | Blue scarves. Two of them. Sailcloth; my father sewed them himself. You don't have to say anything. Just look.
-mira smile | Courier's promise. Signed, sealed, stacked.
-nami smile | I'll keep the light on for them. And now for you two. ...That was sappy. Leave before I make a pun.
-kai smug | You've got one ready. I can see it in your face.
-nami smug | Fine. Safe travels. Shore you'll be back. ...Please go. I need to stand in the dark and think about that one.
+nami shocked | That last four-row... Did you hear it? The whole board rang like the bell on the harbor buoy.
+mira delighted | That's it! That's the sound! The Commons sounded like that all the time, on every board at once!
+nami smile | Here. This is my champion's seal. You earned it. Just don't let your stacks get crooked.
+kai normal | They're going to get crooked.
+mira smile | Mostly straight, then. Now, Nami, the stars! You promised!
+nami normal | That one is called the Ferry. Those four in a row are the Long Piece. My mom named it. She wasn't very creative.
+mira sad | Nami... If I make it to the Commons, and somebody's still there... what should I look for?
+nami sad | Two blue scarves made of sailcloth. My dad sewed them himself. You don't have to say anything. Just look for them.
+mira smile | I promise. Signed, sealed, stacked.
+nami smile | And I'll keep the light on for them, and for you two as well. ...That was sappy. Go, before I make a pun.
+kai smug | You already have one ready. I can tell.
+nami smug | Fine. Have a safe trip. I'm shore you'll be back! ...Please leave. I need a minute alone to regret that.
 END
 
 # =============================================================== WORLD 2: BLOOM VALLEY (Hana)
 
 SCENE w1_intro 1
 RIGHT hana
-mira delighted | Bloom Valley! It smells like rain and jam. Kai, it smells like JAM!
-kai normal | Strawberry. Also, something under my shoe just said "oof".
-hana shocked | Oh. You're standing on Gerald.
+mira delighted | Bloom Valley! It smells like rain and strawberry jam!
+kai normal | Something under my shoe just said "oof".
+hana shocked | Oh dear. You're standing on Gerald.
 kai shocked | Who's Gerald?!
-hana smile | Gerald is a green blob. He doesn't mind. He's very flat about things. I'm Hana. I keep the garden.
-mira smile | Courier Mira! Are you the champion? You don't look very... championy.
-hana delighted | Thank you. This is Sproutlet. That's Mrs. Puddle. That's Gerald's cousin, also Gerald. Blobs don't mind repeats.
-kai normal | How many of them have you named?
-hana normal | All of them. Everyone should have a name. Especially the ones nobody else remembers.
-mira normal | Your flowers grow right out of those old gray stones. I didn't know anything could grow on garbage.
-hana normal | Please don't call them that. ...Kiko's at the Seed Plot. She meets everyone who asks about the stones.
+hana smile | Gerald is a green blob. He doesn't mind. He's very easygoing. Hello, I'm Hana. I take care of this garden.
+mira smile | I'm Mira, a courier! Are you the champion here? You don't really look like a champion.
+hana delighted | Thank you! That's Sproutlet, that's Mrs. Puddle, and that's Gerald's cousin, who is also named Gerald.
+kai normal | How many of these blobs have you named?
+hana normal | All of them. Everyone deserves a name. Especially the ones nobody else remembers.
+mira normal | Your flowers are growing right out of those old gray blocks. I didn't know anything could grow on garbage.
+hana sad | Please don't call them that.
+hana normal | My friend Kiko is at the Seed Plot. Play her first. She likes to meet anyone who asks about my stones.
 END
 
 SCENE w1_n0 1
 RIGHT kiko
-kiko angry | You're the one asking about the stones. Hana told me. Hana tells me everything eventually, usually around teatime.
+kiko angry | So you're the one asking about the gray stones. I'm Kiko. I keep the bees, and I keep an eye on Hana.
 mira normal | I only asked what they were.
-kiko normal | People come down off the ridge and ask what they are. Then they ask if they can take one. Then they ask what they're worth.
-kiko angry | Then my bees chase them back up the ridge. The bees and I have an understanding.
-kai normal | We don't want one. We've got a box. We're full.
-kiko smug | Good. Play me. Fill the third column and you lose, and then you buy honey. A lot of honey.
+kiko normal | People come down from the hills and ask what they are. Then they ask if they can take one. Then they ask how much they're worth.
+kiko angry | And then my bees chase them back up the hill.
+kai normal | We don't want any stones. Honestly. Our bags are already full of marshmallows.
+kiko smug | Good. Then play me. If you lose, you're buying honey. A lot of honey.
 END
 
 SCENE w1_n0_win 1
 RIGHT kiko
-kiko normal | Fine. You pop clean and you don't gloat. The bees like you. They don't like anyone.
-kai shocked | One of them is on my nose.
-kiko smile | That's how they show it.
+kiko normal | Fine. You play clean, and you don't brag. The bees seem to like you, and they don't like anybody.
+kai shocked | There's a bee on my nose.
+kiko smile | That means it likes you too.
 END
 
 SCENE w1_n0_lose 1
 RIGHT kiko
-kiko smug | Third column. Every time. Honey is two jars a coin. Pay the bees.
+kiko smug | You filled the third column again. Keep that spot low, or there's no room for your next pair. Now, about that honey...
 END
 
 SCENE w1_n1 1
 RIGHT emi
-emi delighted | Is she the courier?! Hi! I'm Emi! Do you chain? I chain! I chained a teapot once. It wasn't in the game. Nobody was happy.
-mira smile | I'm learning! Chains here are... a lot.
-emi delighted | Chains are the BEST. You pop one, then it pops, then... I don't plan them. Planning is for people who are scared!
-kai normal | Should she plan them?
-emi smile | Probably! I'm terrible! I win a lot anyway! Let's go!
+emi delighted | Are you the courier? Hi! I'm Emi! Do you like chains? I love chains! I once chained so hard that I broke a teapot!
+mira smile | I'm still learning. Chains are a lot to take in.
+emi delighted | They're the best! You pop one group, then the blobs fall and pop another, and then another! I never plan mine. Planning is boring!
+kai normal | Should {she} be planning them?
+emi smile | Probably! I'm terrible at this! I still win a lot, though! Let's play!
 END
 
 SCENE w1_n1_win 1
 RIGHT emi
-emi shocked | You planned it. You stacked them on purpose and they went pop-pop-pop. Is that allowed? Teach me! Later? Now?
-mira smile | Stairs. Groups of three, each one on top of the next.
-emi delighted | Stairs! I'm going to build stairs! I'm going to build so many stairs!
+emi shocked | You planned that! You stacked them on purpose, and they went pop, pop, pop! Can you teach me? Please?
+mira smile | Build stairs. Stack groups of three, so each pop drops blobs onto the next group.
+emi delighted | Stairs! I'm going to build so many stairs!
 END
 
 SCENE w1_n1_lose 1
 RIGHT emi
-emi delighted | I don't know what I did, but it was ten pops long! Again! Again!
+emi delighted | I don't even know what happened, but it was ten pops long! Try popping one group so the blobs above fall into place. That's a chain!
 END
 
 SCENE w1_mid 1
 RIGHT hana
-mira normal | Hana? It's pouring. And you're watering the gray stones. Not the flowers. The stones.
-hana smile | The rain doesn't reach under the leaves. Old stones get very dry.
-kai normal | I offered one a pickled marshmallow. It didn't want it.
-hana normal | Nobody wants those, Kai. That isn't about the stones.
-kai sad | Wow. On my own road trip.
-mira normal | Why plant on top of them? Kiko says the soil's better by the stream. She said it twice.
-hana sad | They like the flowers, I think. It's quiet down there. It helps to have something pretty to look up at.
+mira normal | Hana? It's pouring rain. Why are you watering the gray stones instead of the flowers?
+hana smile | The rain can't reach under the leaves. Old stones get very dry.
+kai normal | I offered one of them a pickled marshmallow. It didn't want it.
+hana normal | Nobody wants those, Kai. That has nothing to do with the stones.
+kai sad | Ouch. And on my own road trip, too.
+mira normal | Kiko says the soil is better by the stream. So why plant your flowers on top of the stones?
+hana sad | I think they like the flowers. It's very quiet down there. It helps to have something pretty to look up at.
 mira shocked | ...Down where?
-hana smile | Hm? Oh, look. Mrs. Puddle had babies. One pink, one blue. I'll name them Mira and Kai.
-kai normal | Why am I the blue one?
-hana normal | You wear blue every day. When someone's gone, people remember their color. It's nice to pick it while you're here.
-mira sad | Hana. Nobody's gone.
-hana smile | No. Not today. Ren's here, by the way. He wants your garbage. He'll explain. He explains it badly.
+hana smile | Hm? Oh, look! Mrs. Puddle had babies. One is pink and one is blue. I'll name them Mira and Kai.
+kai normal | Why do I have to be the blue one?
+hana normal | Because you wear blue every day. When someone is gone, people remember their color. It's nice to choose it while you're still here.
+mira sad | Hana, nobody's gone.
+hana smile | No, not today. Oh, and Ren is here. He wants your garbage. He'll explain. Badly.
 END
 
 SCENE w1_n2 1
 RIGHT ren
-ren normal | Courier. Send me garbage. As much as you can. Gray only. I'm collecting for a shrine back home in the bazaar.
-mira shocked | You... want to be attacked?
-ren smile | Every stone I take home goes in the wall. One stone, one person. It's slow. I'm calm about it. I'm calm about most things.
-kai normal | Hana says you get loud at row eleven.
+ren normal | You're the courier. I'm Ren. Please attack me. Send me as much garbage as you can.
+mira shocked | You... want me to attack you?
+ren smile | I'm collecting gray stones for a shrine at the bazaar. One stone for each person who never came home from the last Commons Cup.
+ren normal | It's slow work, but I'm a calm person. I stay calm about almost everything.
+kai normal | Hana says you get loud when your stack reaches row eleven.
 ren normal | Row eleven is a very serious row.
 END
 
 SCENE w1_n2_win 1
 RIGHT ren
-ren smile | Twelve stones. Twelve names for the wall. Thank you. Strange thing to say after losing. I'm saying it anyway.
+ren smile | You sent me twelve stones. That's twelve names for the shrine. Thank you. It's strange to say that after losing, but I mean it.
 END
 
 SCENE w1_n2_lose 1
 RIGHT ren
-ren angry | ROW ELEVEN! ...Sorry. Sorry. I'm calm. Your umbrella came late: pop small when the tray fills up.
+ren angry | ROW ELEVEN! ...Sorry. I'm calm now. When your tray fills up, fire a small chain to cancel the nuisance before it lands.
 END
 
 SCENE w1_n3 1
 RIGHT luna
-luna smug | Mira, the pink courier! Luna, moon courier, fastest in five worlds, twice your size in reputation. I'm here for your box.
-mira angry | My box is not for pickup!
-luna smug | My waybill says "one sealed box, from the pink courier, to Cinder Crown, intact". There's a seal and everything. A big red one.
+luna smug | Found you! You're the pink courier, right? I'm Luna, from the moon. Fastest courier in all five worlds. And I'm here for your box.
+mira angry | My box is not up for pickup!
+luna smug | My delivery slip says otherwise. "One sealed box. Collect it from the pink courier. Deliver it to Cinder Crown." It even has a big red seal.
 kai shocked | Whose seal?
-luna normal | Didn't read it. I read the fee. The fee was very readable. Play me for it. Courier rules.
-mira smug | Courier rules. Win and it's yours. Lose and you carry our bags to the next world.
-luna delighted | Deal! I've never carried anything I wasn't paid for. This'll be educational for you.
+luna normal | I didn't look. I only read the part about the money. It was a lot of money.
+mira smug | Then let's settle it like couriers. If you win, you take the box. If I win, you carry our bags to the next world.
+luna delighted | Deal! Get ready to say goodbye to that box, pink courier!
 END
 
 SCENE w1_n3_win 1
 RIGHT luna
-luna shocked | You built stairs. Three high. I don't even build stairs to my own house.
-mira smug | Bags are over there. The heavy one's Kai's. It's mostly marshmallows.
-luna angry | This isn't over. My client is very patient. Red seal, big crown on it. ...I wasn't supposed to say crown.
+luna shocked | You built stairs three groups high! I can't even build the stairs to my own front door!
+mira smug | Our bags are over there. The heavy one is Kai's. It's mostly marshmallows.
+luna angry | This isn't over! My client is very patient. The seal has a big crown on it. ...Oops. I wasn't supposed to say "crown".
 kai sad | ...A crown.
 END
 
 SCENE w1_n3_lose 1
 RIGHT luna
-luna smug | Ha! Hand it over. ...Fine. Best of three. Courier rules. Which I just made up. Again!
+luna smug | Ha! Hand it over! ...Actually, couriers always play best of three. I just decided that. Let's go again!
 END
 
 SCENE w1_n4 1
 RIGHT kai
-emi delighted | Two on two! Me and Kiko! Kiko said no, and then the bees said yes!
-kiko normal | The bees did not say yes. I'm here because Emi will chain the beehive if nobody supervises her.
-mira smile | Kai! Chain team! Your favorite!
-kai normal | I'm allergic to chains. They make me sneeze. The big ones especially.
-mira smug | That is not a thing.
-kai normal | It's a medical thing. Ask a doctor. Ask the next doctor we meet. Let's go.
+emi delighted | Two against two! Me and Kiko! Kiko said no, but then the bees said yes!
+kiko normal | The bees said nothing. I'm only here because Emi will chain the beehive if nobody watches her.
+mira smile | Kai, it's a chain match! You love chains!
+kai normal | Actually, I'm allergic to chains. They make me sneeze. Especially the big ones.
+mira smug | That's not a real thing.
+kai normal | It's a medical thing. Ask the next doctor we meet. Let's go.
 END
 
 SCENE w1_n4_win 1
 RIGHT kai
-mira shocked | Kai. That was a six-chain. You built a six-chain in the corner while I wasn't looking.
+mira shocked | Kai, that was a six-chain! You built a six-chain in the corner while I wasn't looking!
 kai normal | I sneezed. The blobs went everywhere. It was gross.
-mira angry | You don't sneeze in stairs! Nobody sneezes in stairs!
-kai smile | I'm a very talented sneezer. Come on. Hana's making tea.
+mira angry | You can't sneeze a staircase! Nobody can sneeze a staircase!
+kai smile | I'm very good at sneezing. Come on, Hana's making tea.
 END
 
 SCENE w1_n4_lose 1
 RIGHT kai
-kai sad | One row. My tray was full. Sorry.
-mira normal | You had a chain ready. Three high, all blue. I saw it. You just didn't fire.
-kai normal | I thought it was green. Blue, green. Easy mistake.
+kai sad | That was me. My tray filled up. Sorry.
+mira normal | You had a chain ready, though. Three groups high, all blue. I saw it. You just didn't fire it.
+kai normal | I thought they were green. Blue, green... It's an easy mistake.
 END
 
 SCENE w1_boss 1
 RIGHT hana
-hana normal | Everyone, hush. The courier wants to play the Bloom Keeper. Gerald, that means you too.
-mira normal | Hana, before we start. If the Commons opens again, what happens to your stones?
-hana sad | That's the right question. Nobody ever asks it. They ask what the stones are worth.
-hana normal | I don't know. Maybe they'd be cleared. Maybe that would be good for them. Maybe they'd just be gone.
-mira sad | I'd never hurt them. I promise.
-hana smile | I believe you. That's why I'll play you as hard as I can. Gardens are kind. They're not soft.
+hana normal | Everyone, quiet, please. The courier wants to play me. Gerald, that means you too.
+mira normal | Hana, before we start... If the Commons opens again, what will happen to your stones?
+hana sad | That's the right question. Nobody ever asks it. They only ask how much the stones are worth.
+hana normal | I don't know. Maybe they'll be cleared away. Maybe that would be good for them. Or maybe they'll just be gone.
+mira sad | I would never hurt them. I promise.
+hana smile | I believe you. That's why I'm going to play as hard as I can. A garden is gentle, but it isn't weak.
 kai normal | Should we be scared?
-hana smile | A little. Chains are patient. You plant one pop and wait, and everything you buried comes back up at once.
-mira shocked | That sounds beautiful AND very threatening.
-hana delighted | Thank you. If I win, you stay for tea. If you win, you also stay for tea. Gerald insists.
+hana smile | A little. Chains take patience. You plant one pop and wait, and then everything you buried comes back up at once.
+mira shocked | That sounds beautiful and really scary at the same time.
+hana delighted | Thank you! If I win, you stay for tea. If you win, you still stay for tea. Gerald insists.
 END
 
 SCENE w1_n5_lose 1
 RIGHT hana
-hana smile | You fired too early. That's alright. Tea first, then again. The garden isn't going anywhere.
+hana smile | You fired your chain too early. That's all right. Let it grow a little taller next time. Tea first, then we'll play again.
 END
 
 SCENE w1_clear 1
 RIGHT hana
-hana smile | You chain like someone who's late for something. The flowers liked it anyway. Take the valley style.
-mira delighted | Bloom style, received! Signed, sealed, stacked!
-mira normal | Hana. The stones. Where did they really come from?
-hana normal | The river brought them, the spring after the last Cup. A whole field, overnight. Gray, warm, and very quiet.
-hana sad | I sat with them all that summer. After a while, you can tell when something used to be someone.
-mira shocked | Used to be...
-hana smile | I don't know the rest. A doctor would. There's one on the moon who never sleeps. Ask her. Ask her gently.
-kai sad | Mira. We could stay here a while. Help with the garden. The moon's very far.
+hana smile | You chain like someone who's late for something. The flowers liked it anyway. Here's my champion's seal.
+mira delighted | Bloom Valley seal, received! Signed, sealed, stacked!
+mira normal | Hana, where did your stones really come from?
+hana normal | The river brought them, the spring after the last Commons Cup. A whole field, overnight. They were gray, and warm, and very quiet.
+hana sad | I sat with them all summer. After a while, you can tell when something used to be someone.
+mira shocked | Used to be... someone?
+hana smile | I don't know the rest. A doctor would. There's one on the moon who never sleeps. Ask her. But ask gently.
+kai sad | Mira, we could stay here for a while. Help with the garden. The moon is really far away.
 mira angry | Kai! We are NOT stalling!
-kai normal | It was a suggestion. I'll pack the marshmallows.
-hana smile | Little Mira and little Kai will miss you. Come back and see them. Someone in Bloom Valley is always waiting for you two.
+kai normal | It was just a suggestion. I'll go pack the marshmallows.
+hana smile | Little Mira and little Kai will miss you. Come back and visit them. Somebody in Bloom Valley will always be waiting.
 END
 
 # =============================================================== WORLD 3: CLINIC MOON (Yuki)
 
 SCENE w2_intro 2
 RIGHT yuki
-mira delighted | Clinic Moon! Courier Mira, here for the champion! Is the night doctor in?
-yuki normal | She is. Take a number. It's number one. It's always number one. Nobody visits at night.
-kai sad | Doctor. I'm very sick. Allergic to chains. Highly contagious. Mira should take me home right now. Far away.
-yuki normal | Say ahh. Tongue: blue. Diagnosis: chain-flavored gum. Prognosis: you'll live. Your taste buds won't.
-kai normal | It's a real allergy. Big chains. Ask anyone in Bloom Valley.
-yuki smug | I'll write "faking" on your chart in very small letters. Professional courtesy.
-mira normal | Hana sent us. She said you'd know about the gray stones. She said to ask gently.
-yuki sad | ...Hana said that? Then she's sure. Hm.
-yuki normal | Hygiene first. Race my nurse on the germ garden. Clear the bottle before Aoi does and I'll answer one question. One.
+mira delighted | Clinic Moon! I'm Mira, a courier, and I'm here to challenge the champion! Is the night doctor in?
+yuki normal | She is. Please take a number. It's number one. It's always number one. Nobody visits at night.
+kai sad | Doctor, I'm very sick. I'm allergic to chains, and it's contagious. Mira needs to take me home right away.
+yuki normal | Say "ahh". Hm. Your tongue is blue. Diagnosis: you've been chewing chain-flavored gum. You'll live.
+kai normal | The allergy is real. Ask anyone in Bloom Valley.
+yuki smug | I'll write "faking it" on your chart. In very small letters, as a professional courtesy.
+mira normal | Hana sent us. She said you would know about the gray stones. She told us to ask gently.
+yuki sad | ...Hana said that? Then she must be sure.
+yuki normal | All right. Clean hands first. Race my nurse on the germ garden. Clear your bottle before she does, and I'll answer one question.
 END
 
 SCENE w2_n0 2
 RIGHT aoi
-aoi shocked | Oh! Visitors! Real ones! Hello! Sorry. I'm Aoi. I count sheep for the patients so they don't have to.
-mira smile | That's... kind of beautiful?
-aoi smile | Four hundred and six last night. Very good sheep. Okay! Same bottle, same germs. Wash your hands, then race me.
+aoi shocked | Oh! Visitors! Real ones! Hi! Sorry! I'm Aoi, the night nurse. I count sheep for the patients so they don't have to.
+mira smile | That's actually really sweet.
+aoi smile | I counted four hundred and six last night. Very good sheep. Okay! Same bottle, same germs. The first one to clear them all wins!
 kai normal | Who are the patients?
-aoi sad | Oh. Doctor Yuki will tell you. Ready? I'm going to count while we play. It helps.
+aoi sad | Oh... Doctor Yuki should tell you that. Ready? I'm going to count while we play. It helps me focus.
 END
 
 SCENE w2_n0_win 2
 RIGHT aoi
-aoi delighted | Clean bottle! You took the low germs first. That's what Doctor Yuki says: never leave anyone at the bottom.
-mira normal | That's a germ rule?
+aoi delighted | Your bottle's clean! You cleared the low germs first. That's what Doctor Yuki always says: never leave anyone at the bottom.
+mira normal | Is that a rule for germs?
 aoi normal | It's her only rule. She says it about everything.
 END
 
 SCENE w2_n0_lose 2
 RIGHT aoi
-aoi smile | Done! Sorry. I count in sheep, and you were about forty sheep behind. Take the low germs first. They get buried.
+aoi smile | Done! Sorry, you were about forty sheep behind. Clear the germs at the bottom first, before they get buried.
 END
 
 SCENE w2_n1 2
 RIGHT taro
 taro sleepy | Is this the moon? I fell asleep on the night train again. ...Oh, it is the moon. Good. That's where I was going.
-mira smile | You come here a lot?
-taro normal | Thursdays. My big brother's here. He doesn't wake up, but he likes hearing my scores. I think he does.
-taro smile | Play me? I need a new story for Thursday. A good one.
-kai sad | ...Sure. We'll make it a good one.
+mira smile | I'm Mira. Do you come here a lot?
+taro normal | I'm Taro. I come every Thursday. My big brother is a patient here. He never wakes up, but I tell him my scores anyway.
+taro smile | Will you play me? I need a good story to tell him this week.
+kai sad | ...Sure. Let's make it a good one.
 END
 
 SCENE w2_n1_win 2
 RIGHT taro
-taro smile | You beat me with a double. That's a good story. He'll like the double. He always liked doubles.
-mira normal | Taro. What's his name? Your brother.
-taro smile | Kenji. Bed by the window, with the clock that's five minutes fast. He set it like that. He was always early.
+taro smile | You beat me by clearing two lines at once! That's a good story. He'll like that. He always liked doubles.
+mira normal | Taro, what's your brother's name?
+taro smile | Kenji. He's in the bed by the window, next to the clock that runs five minutes fast. He set it that way so he'd never be late.
 END
 
 SCENE w2_n1_lose 2
 RIGHT taro
-taro delighted | I won! That's a great story! Can I say you were really, really good? It sounds better if you were really good.
+taro delighted | I won! That's a great story! Try clearing two lines at once. It sends loose capsule halves over to your rival.
 END
 
 SCENE w2_mid 2
 RIGHT yuki
-yuki normal | You won the race, so you get your question. Shoes off, voices down. This is the first half of the answer.
-mira normal | Oh. It's cozy. And everyone's asleep. All of them?
-yuki normal | Twenty-three. They were on the big board at the last Commons Cup when it topped out. They came off it like this.
-mira shocked | But they got off. They're right here.
-yuki sad | Most of each of them got off. Enough to breathe. Not enough to wake up.
-mira sad | Seven years. You've been awake with them for seven years?
-yuki normal | Germs off, lights low. Families on Thursdays. I tell them bad jokes. Groaning is healthier than crying. I checked.
-mira shocked | Kai. The two by the window. Blue scarves. Sailcloth. They're holding hands.
-kai sad | ...Nami's parents.
-yuki normal | Ferry passengers from Quad Reef, no letters on them. In seven years nobody came asking. I didn't know who to write to.
-mira sad | I know who. I promised her I'd look. I didn't think I'd actually... find.
-yuki sad | Delivering news like this is worse than not knowing, for about a week. Then it's better. That's not from a journal. It's from me.
+yuki normal | You won the race, so you've earned your question. Take off your shoes and keep your voice down. This is the first half of the answer.
+mira normal | Oh, it's cozy in here. Everyone's asleep. ...All of them?
+yuki normal | All twenty-three. They were playing on the big board at the last Commons Cup when it topped out. This is how they came off it.
+mira shocked | But they got off the board! They're right here!
+yuki sad | Their bodies did. But part of each of them stayed behind on that board. Enough came back to keep them breathing, but not enough to wake them.
+mira sad | That was seven years ago. Have you been staying up with them this whole time?
+yuki normal | Every night. I keep the germs out and the lights low. Their families visit on Thursdays, and I tell them bad jokes.
+yuki smile | Groaning is healthier than crying. I've checked.
+mira shocked | Kai, look. The two by the window. They're wearing blue scarves made of sailcloth. They're holding hands.
+kai sad | ...Those are Nami's parents.
+yuki normal | They came from Quad Reef, but they had no letters on them. In seven years, nobody came looking for them. I didn't know who to write to.
+mira sad | I do. I promised Nami I'd look for them. I just never thought I'd actually find them.
+yuki sad | Bad news is harder to hear than no news, for about a week. After that, it's better. Trust me.
 END
 
 SCENE w2_n2 2
 RIGHT luna
-luna smug | Rematch on my home moon! I carried your bags all the way here, so you owe me one. Low gravity. My chains go higher. Science!
-mira sad | Luna. Not today.
-luna normal | ...You look like you saw a ghost. You okay?
-mira normal | Your client. The red seal with the crown. Did they say why they want the box?
-luna normal | "Before it's opened." That's all. Big fee for a small box. I figured jewels. You're making it sound like it isn't jewels.
-mira angry | Play me. If I win, you tell me the name on that waybill.
-luna smug | If I win, I take the box and never think about this again. ...Okay. Go.
+luna smug | Rematch on my home turf! I carried your bags all the way to the moon, so you owe me one. My chains go higher here. Low gravity!
+mira sad | Luna, not today. Please.
+luna normal | ...You look like you've seen a ghost. Are you okay?
+mira normal | The person who hired you. The one with the red seal. Did they say why they want my box?
+luna normal | Only that it has to arrive before anyone opens it. That's a big fee for a small box. I figured it was full of jewels. Isn't it?
+mira angry | Play me. If I win, you tell me whose name is on that delivery slip.
+luna smug | And if I win, I take the box and forget all about this. ...Okay. Let's go.
 END
 
 SCENE w2_n2_win 2
 RIGHT luna
-luna sad | Fine! The seal's the Queen's. Kaede. But the handwriting's an old man's. Neat. Shaky. Signed "T". That's all I know.
-kai normal | "T".
-luna smug | And I'm still taking the box. Eventually. When you look less sad. It's no fun when you look sad.
+luna sad | Fine! The seal belongs to the Queen. Kaede. But the handwriting is an old man's, neat but shaky. It's only signed with one letter: T.
+kai normal | "T"...
+luna smug | And I'm still taking that box someday. Just not while you look this sad. Beating sad people is no fun.
 END
 
 SCENE w2_n2_lose 2
 RIGHT luna
-luna smug | Ha! I'll take that box now. ...Actually, you look terrible. Best of five. Go sleep first.
+luna smug | Ha! I'll take that box now. ...Actually, you look terrible. Get some sleep first. Then we'll go best of five.
 END
 
 SCENE w2_n3 2
 RIGHT aoi
-aoi normal | Doctor Yuki says you were writing a letter all night. The post leaves the moon on Fridays.
-mira normal | I've started it eleven times. "Dear Nami, I found them." And then I stop.
+aoi normal | Doctor Yuki says you were up all night writing a letter. The mail leaves the moon on Fridays.
+mira normal | I've started it eleven times. "Dear Nami, I found them." Then I don't know what to write next.
 aoi smile | When I don't know what to say to a patient, I count. One: I found them. Two: they're safe. Three...
-mira smile | Three: they're holding hands. ...Thanks, Aoi. Race me. I'll finish it after.
+mira smile | Three: they're holding hands. ...Thanks, Aoi. Let's race. I'll finish the letter afterward.
 END
 
 SCENE w2_n3_win 2
 RIGHT aoi
-aoi delighted | Four hundred and twelve! That's every germ you cleared this week. I counted. Go post your letter!
+aoi delighted | Four hundred and twelve! That's how many germs you've cleared this week. I counted. Now go mail your letter!
 END
 
 SCENE w2_n3_lose 2
 RIGHT aoi
-aoi normal | You left one on the bottom row. Never leave anyone at the bottom. Again?
+aoi normal | You left a germ on the bottom row. Never leave anyone at the bottom! Want to try again?
 END
 
 SCENE w2_n4 2
 RIGHT kai
-taro delighted | Two on two! Me and the nurse against you and the sick guy! Best Thursday story ever.
-kai normal | I'm still sick. Matchitis. I should sit this one out. So should Mira. It's catching.
-mira angry | Kai, you've been sick in every world. In the valley it was chains. Here it's matchitis. Next it'll be swapping.
+taro delighted | Two against two! Me and the nurse against you and the sick guy! This is the best Thursday story ever!
+kai normal | I'm still sick, actually. I have matchitis. I should sit this one out. Mira should too. It's catching.
+mira angry | Kai, you've been sick in every world! In the valley, it was chains. Now it's matchitis. What's next?
 kai sad | Maybe I'm just sick of watching you walk toward that board.
-mira shocked | ...What?
+mira shocked | ...What did you just say?
 kai normal | Nothing. Bad joke. Let's play.
 END
 
 SCENE w2_n4_win 2
 RIGHT kai
-mira normal | You played properly. Every clear right on time. No "accidents".
-kai normal | Taro needed a good story for Thursday. Losing on purpose isn't a good story.
+mira normal | You played properly this time. Every clear came right on time. No "accidents".
+kai normal | Taro needed a good story for Thursday. Losing on purpose doesn't make a good story.
 mira shocked | Losing on purpose?
-kai normal | Figure of speech. Let's get some sleep.
+kai normal | It's just a figure of speech. Let's get some sleep.
 END
 
 SCENE w2_n4_lose 2
 RIGHT kai
-kai sad | That one's on me. Sorry. ...That one really was on me, for once.
-mira normal | "For once"?
+kai sad | That one was my fault. Sorry. ...That one really was my fault, for once.
+mira normal | What do you mean, "for once"?
 END
 
 SCENE w2_boss 2
 RIGHT yuki
-yuki normal | Pre-match checkup. Pulse: fast. Hands: shaking a little. Eyes: you've been crying, and you'd like me not to mention it.
-mira angry | I'm fine. Couriers don't shake. We vibrate. Professionally.
-yuki smug | Noted. I'm writing "vibrates" on your chart.
+yuki normal | Time for your checkup. Your pulse is fast and your hands are shaking. You've been crying, too, but you'd rather I didn't mention it.
+mira angry | I'm fine! Couriers don't shake. We just... vibrate. Professionally.
+yuki smug | Noted. I'll write "vibrates" on your chart.
 kai normal | Doctor, I'd like to report a case of matchitis.
-yuki normal | I looked it up. It isn't real. I invented three diseases this week and that wasn't one of them.
-yuki normal | Listen to the bottle. Capsules click, germs fizz, lines snap. Every board has a heartbeat. Mine is very steady.
-yuki sad | And Mira. If your bottle fills, stop. Don't play on past the top. I don't want to chart you. My ward is full.
-mira smile | Then I'll keep it low. One clean bottle for the doctor. Signed, sealed, stacked!
+yuki normal | I looked it up. It isn't real. I invented three new diseases this week, and that wasn't one of them.
+yuki normal | Listen to the bottle when you play. Capsules click, germs fizz, lines snap. Every board has a heartbeat, and mine is very steady.
+yuki sad | And Mira, if your bottle fills up, stop. Don't keep playing past the top. I don't want you in my ward. It's already full.
+mira smile | Then I'll keep it low. One clean bottle, delivered to the doctor. Signed, sealed, stacked!
 END
 
 SCENE w2_n5_lose 2
 RIGHT yuki
-yuki normal | Prognosis: you lose. This time. Treatment: sleep, water, one more match. I'll be up. I'm always up.
+yuki normal | Prognosis: you lose. This time. Treatment: sleep, water, and one more match. Keep the neck of your bottle clear. I'll be up.
 END
 
 SCENE w2_clear 2
 RIGHT yuki
-yuki smile | Bottle clear. Germs gone. Huh. I'd forgotten what a board sounds like when it just breathes.
-mira normal | Doctor. The second half of the answer. The gray stones.
-yuki normal | What do you think garbage blocks are? Honestly.
-mira normal | Attacks. Your rival clears lines and junk lands on you. That's the rule.
-yuki sad | That's the rule we tell children. When a board tops out, a little of whoever was playing stays behind. Gray is what's left.
-yuki normal | A small board leaves a pebble. You shake it off by morning. That's why losing feels heavy for a while.
-yuki sad | The Commons was the biggest board there ever was. When it topped out, it left a field. Hana's been tending it.
-mira shocked | Hana's flowers. She's been planting flowers on... on people.
+yuki smile | The bottle is clear and the germs are gone. Huh. I'd forgotten what a board sounds like when it can breathe. Here, take my seal.
+mira normal | Doctor, you said the ward was the first half of the answer. What's the second half?
+yuki normal | Tell me something first. What do you think garbage blocks are?
+mira normal | They're attacks. Your rival clears lines, and junk lands on your board. That's the rule.
+yuki sad | That's the rule we teach children. The truth is, when a board tops out, a little piece of the player stays behind. The gray is what's left.
+yuki normal | A small board only leaves a pebble, and you shake it off by morning. That's why losing makes you feel heavy for a while.
+yuki sad | But the Commons was the biggest board there ever was. When it topped out, it left a whole field. Hana has been taking care of it.
+mira shocked | Hana's flowers... She's been planting flowers on... on people.
 kai angry | Yuki. That's enough.
-yuki normal | It isn't enough, Kai. It's just all I know. Mira, did someone you love play in the final?
-mira sad | My sister. Sena. She isn't in your ward. I looked at every bed. I looked twice.
-yuki sad | Then I don't know where she is. "Unknown." I hate that word. It's the only honest one I have.
+yuki normal | It isn't enough, Kai. It's just all I know. Mira, did someone you love play in that final?
+mira sad | My sister, Sena. She isn't in your ward. I checked every bed. Twice.
+yuki sad | Then I don't know where she is. "Unknown." I hate that word. But it's the only honest one I have.
 box normal | Mm... mm-mm.
-mira shocked | It's humming. In the daytime. Kai, it never hums in the daytime.
+mira shocked | It's humming. In the middle of the day. Kai, it never hums during the day.
 kai sad | ...I know.
-mira shocked | You know it hums?
-kai normal | Air. Now. I have a snack. It's horrible. It'll give you something else to be upset about.
+mira shocked | Wait. You know it hums?
+kai normal | You need some air. Come on. I've got a snack. It's horrible. It'll give you something else to be upset about.
 END
 
 # =============================================================== WORLD 4: TILE BAZAAR (Rin)
 
 SCENE w3_intro 3
 RIGHT rin
-rin delighted | Welcome to the Tile Bazaar! Swap two panels, change your life! Browsing is free. Talking to me is two coins.
-mira shocked | You charge for talking?!
-rin smug | That was a question: one coin. The outrage was free. First-timer discount.
-rin delighted | Hot deals! Reef gems, valley honey, moon capsules, barely expired! Everything must go!
-kai normal | We're here for the champion. That's all. We're not buying.
-rin smug | Then may I interest you in snacks? Pickled marshmallows. Very rare import. Ten coins a bag.
-kai shocked | That's my bag. My name is on it. You took that out of my backpack. Just now. While talking.
-rin delighted | Signed merchandise! Now fifteen.
-mira delighted | Ha! Okay, champion. If I win, everything's free. Including his marshmallows.
-rin smug | Deal. Nobody else was buying them. ...Hold on. Hoodie. Tired eyes. Sad little snack bag. I know you.
-rin shocked | You're the ball boy! From the final! You ran ONTO the board! Look at you, you've gotten so tall!
-kai normal | Wrong guy. Common face. Commonest face in the bazaar. Let's go, Mira.
+rin delighted | Welcome to the Tile Bazaar! Swap two panels and change your life! Browsing is free. Talking to me costs two coins.
+mira shocked | You charge people for talking?!
+rin smug | That was a question, so that's one coin. The yelling was free. First-time customer discount.
+rin delighted | I'm Rin, the champion here! Hot deals today! Reef gems, valley honey, moon capsules! Everything must go!
+kai normal | We're only here to challenge you. We're not buying anything.
+rin smug | Then can I interest you in a snack? Pickled marshmallows. A rare import. Ten coins a bag.
+kai shocked | That's MY bag. My name is written on it. You just took it out of my backpack while you were talking!
+rin delighted | Ooh, it's signed! Now it's fifteen.
+mira delighted | Ha! Okay, champion. If I win, everything is free. Including his marshmallows.
+rin smug | Deal. Nobody else was going to buy them anyway. ...Wait. Hoodie. Tired eyes. Sad little snack bag. I know you.
+rin shocked | You're the ball boy from the final! You ran onto the board! Look at you! You got so tall!
+kai normal | Wrong guy. I just have a very common face. Come on, Mira. Let's go.
 END
 
 SCENE w3_n0 3
 RIGHT kai
-mira normal | Ball boy?
-kai normal | She's a merchant. She says whatever makes you stop walking. Look, a puzzle stall. You love puzzle stalls.
+mira normal | Kai, what did she mean by "ball boy"?
+kai normal | She's a merchant. She'll say anything to make you stop walking. Oh, look, a puzzle stall. You love puzzle stalls.
 mira normal | ...I do love puzzle stalls.
-kai smile | Solve it in the moves it gives you. I'll hold the box.
-mira smug | Nobody holds the box. I hold the box. You hold the marshmallows.
+kai smile | You solve it, and I'll hold the box.
+mira smug | Nobody holds the box but me. You can hold the marshmallows.
 END
 
 SCENE w3_n0_win 3
 RIGHT rin
-rin smug | Solved in the moves allowed! Your prize: the joy of solving. And a coupon. The coupon is also nothing.
+rin smug | Solved in the moves allowed! Your prize is the joy of solving. And a coupon. The coupon is also worth nothing.
 END
 
 SCENE w3_n0_lose 3
 RIGHT rin
-rin normal | Out of moves. Look for the swap that drops something. Panels love to fall.
+rin normal | Out of moves! Look for a swap that makes something fall. Panels love to fall.
 END
 
 SCENE w3_n1 3
 RIGHT mei
-mei normal | Sit. Your fortune is free. Your future is two coins. Rin takes a cut.
+mei normal | Sit down. I'm Mei. I read the future in the puzzle queue. Your fortune is free, but your future costs two coins. Rin takes a cut.
 mira smile | Okay! What's in my future?
 mei normal | An S-piece.
-kai normal | It's always an S-piece. It says so on the sign.
-mei sleepy | Usually. Not today. Today the queue says... hm. You'll lose someone at the top, and find him at the bottom.
-mira normal | Him? I'm looking for a her.
-mei normal | The queue doesn't do grammar. Play me. The stack will tell me the rest.
+kai normal | It's always an S-piece. It says so on her sign.
+mei sleepy | Usually, yes. But not today. Today the queue says... you will lose someone at the top, and find him again at the bottom.
+mira normal | Him? But I'm looking for a her.
+mei normal | The queue doesn't care about grammar. Play me, and the stack will tell me the rest.
 END
 
 SCENE w3_n1_win 3
 RIGHT mei
-mei smile | You swap fast when you're angry. Who are you angry at? Not me. I'm only the fortune.
+mei smile | You swap fast when you're angry. Who are you angry at? Not me, I hope. I only tell the fortunes.
 mira normal | Nobody. Yet.
-mei normal | "Yet." The queue liked that word. Your next piece is an S. Told you.
+mei normal | "Yet." The queue liked that word. Oh, and your next piece is an S. I told you so.
 END
 
 SCENE w3_n1_lose 3
 RIGHT mei
-mei normal | Your stack touched the top line. Raise it early, while it's low. Then it never has to rush.
+mei normal | Your stack touched the top line. Raise it early, while it's still low. Then you never have to rush.
 END
 
 SCENE w3_mid 3
 RIGHT kai
-rin normal | Free sample, no charge, because I feel bad. He was there, Mira. Seven years ago. Running balls at the final. I gave him a lemon candy.
-mira shocked | Kai. You said you were home sick that whole week. I brought you soup.
-kai sad | I was sick. After.
-mira angry | The map you forgot. The wrong ferry. Losing by exactly one row. "Chains make me sneeze." Were you slowing me down?
-kai normal | The snacks are just bad. That part was real.
+rin normal | This one's free, because I feel bad. Mira, he really was there seven years ago. He was a ball boy at the final. I gave him a lemon candy.
+mira shocked | Kai. You told me you were home sick that whole week. I brought you soup.
+kai sad | I was sick. Afterward.
+mira angry | The map you forgot. The wrong ferry. Losing by exactly one row. "Chains make me sneeze." Were you trying to slow me down?
+kai normal | The snacks really are just bad. That part was real.
 mira angry | Kai!
-kai sad | ...Yes. On purpose. All of it.
-mira angry | And the box. You knew it hums. You heard it on the beach, on the first night, and you said nothing!
-kai angry | Because I know what that board does! I watched it happen. You were ten. You don't even remember it right.
-mira angry | You don't get to decide that for me! Seven years, and you've been steering me around like a parcel!
+kai sad | ...Yes. I did it on purpose. All of it.
+mira angry | And the box! You knew it hums! You heard it on our first night on the beach, and you didn't say a word!
+kai angry | Because I know what that board can do! I watched it happen. You were ten. You don't even remember it right.
+mira angry | That's not your call to make! For seven years, you've been steering me around like a package!
 kai sad | ...I was trying to keep you from going where she went.
-mira sad | Then you should have told me. I'll do the next stalls alone. Don't follow me.
-rin sad | Store policy is no refunds. Today I'd give one.
+mira sad | Then you should have told me. I'm doing the next part alone. Don't follow me.
+rin sad | Store policy says no refunds. But today, I'd give one.
 END
 
 SCENE w3_n2 3
 RIGHT ren
-ren normal | Courier. You came alone. Your friend is three stalls back, pretending to look at teapots.
-mira angry | He can look at teapots all day.
-ren normal | He's bought four. ...You want to send garbage at someone. I'm someone. I still need stones. It works out.
-mira sad | Ren. Who are the stones for? Really?
-ren smile | Everyone who didn't come home from the final. One stone each. I've set a hundred and nine. I'm still short. I'm calm about it.
+ren normal | Courier. You came alone. Your friend is three stalls back, pretending to shop for teapots.
+mira angry | He can shop for teapots all day.
+ren normal | He's bought four so far. ...You want to send garbage at someone. I'm someone, and I still need stones. It works out for both of us.
+mira sad | Ren, who is the shrine really for?
+ren smile | For everyone who didn't come home from the final. One stone for each person. I've placed a hundred and nine so far. I'm still short.
 END
 
 SCENE w3_n2_win 3
 RIGHT ren
-ren smile | Nine stones. Nine names. Your friend just bought a fifth teapot. He'll need a bigger bag.
+ren smile | Nine stones. That's nine more names. Your friend just bought a fifth teapot. He's going to need a bigger bag.
 END
 
 SCENE w3_n2_lose 3
 RIGHT ren
-ren angry | ROW ELEVEN! ...Sorry. You were building on top of stones. Crack them first, and they turn into panels.
+ren angry | ROW ELEVEN! ...Sorry. You kept building on top of the stones. Clear the panels next to them, and they'll crack open into new panels.
 END
 
 SCENE w3_n3 3
-mira sad | Okay. Puzzle kiosk. Two moves. I can do two moves on my own. I can do everything on my own.
-mira normal | Hi. It's me. I know you only hum at night. I'm going to talk anyway.
-mira sad | Kai was there. He saw you. Everyone saw you except me, and I'm the one carrying you around in a box.
+mira sad | Okay. A puzzle kiosk. Two moves. I can make two moves by myself. I can do everything by myself.
+mira normal | Hi. It's me. I know you only hum at night, but I'm going to talk to you anyway.
+mira sad | Kai was there that day. He saw you. Everyone saw you except me. And I'm the one carrying you around in a box.
 box normal | Mm.
 mira shocked | ...Was that a yes? Was that you?
 box normal | Mm-mm-mmm, mm-mm...
-mira smile | You're humming it wrong. ...You always hummed it wrong. Okay. Two moves. Watch me.
+mira smile | You're humming it wrong. ...You always hummed it wrong. Okay. Two moves. Watch this.
 END
 
 SCENE w3_n3_win 3
 RIGHT mei
 mei normal | Solved. You were talking to that box the whole time.
-mira angry | It was talking back. ...Sort of.
-mei smile | Boxes don't talk. Whatever's inside them might. That's not a fortune. That's just true.
+mira angry | It was talking back! ...Sort of.
+mei smile | Boxes can't talk. But whatever is inside one might. That isn't a fortune. It's just true.
 END
 
 SCENE w3_n3_lose 3
 RIGHT mei
-mei normal | Two moves, and you spent the first one on being sad. Spend it on the panel that falls.
+mei normal | You only had two moves, and you spent the first one being sad. Use it on a panel that will fall.
 END
 
 SCENE w3_n4 3
 RIGHT luna
-luna smug | Pink courier! Two-on-two lantern match, and you've got no partner. Lucky for you, I'm free. I quit my job last night.
-mira normal | You still want the box.
-luna normal | I read the waybill properly last night. "Contents: one piece of the Commons board. Handle as: a person." A person, Mira.
-luna angry | A courier can refuse a delivery if the contents are alive. That's a real rule. Not an invented one. I checked.
+luna smug | Hey, pink courier! There's a two-on-two match, and you don't have a partner. Lucky for you, I'm free. I quit my job last night.
+mira normal | You don't want my box anymore?
+luna normal | I finally read the whole delivery slip. "Contents: one piece of the Commons board. Handle it like a person." Like a person, Mira!
+luna angry | A courier is allowed to refuse a delivery if what's inside is alive. That's a real rule. I didn't make this one up. I checked.
 mira shocked | You turned down the job?
-luna smug | I turned down a very big fee. You're buying me dinner for a year. Now, partner: don't slow me down.
+luna smug | I turned down a huge fee. So you're buying me dinner for a year. Now come on, partner. Try to keep up.
 mira smile | ...Signed, sealed... I'll finish that one later.
 END
 
 SCENE w3_n4_win 3
 RIGHT luna
-luna delighted | We cracked every stone they sent! We're good at this! I hate that we're good at this!
-mira smile | Luna. Thank you.
-luna normal | Don't. Go and talk to him. He's bought eleven teapots. The whole bazaar is worried.
+luna delighted | We cracked every stone they sent us! We make a really good team! I hate that we make a good team!
+mira smile | Luna... thank you.
+luna normal | Don't thank me. Go talk to him. He's bought eleven teapots now. The whole bazaar is worried about him.
 END
 
 SCENE w3_n4_lose 3
 RIGHT luna
-luna normal | You keep looking at the stands. He's not there. ...He's there. Behind the teapots. Focus.
+luna normal | You keep looking at the stands. He isn't there. ...Okay, he is. Behind the teapots. Focus on your stack!
 END
 
 SCENE w3_boss 3
 RIGHT rin
-rin normal | Champion match! Entry fee is... you know what, waived. You look like you'd bite me.
+rin normal | It's the champion match! The entry fee is... you know what, it's free. You look like you'd bite me.
 mira angry | Just set up the board.
-rin normal | Free tip, because I feel strange: you're swapping like you're angry at the panels. The panels didn't lie to you.
+rin normal | Here's a free tip, since I'm in a strange mood. You're swapping like you're angry at the panels. The panels didn't lie to you.
 mira sad | ...Did you know? About Kai?
-rin sad | I knew a ball boy who ran onto the board when everyone else ran off it. That's all I know. It's a lot, actually.
-kai normal | Up here. In the stands. I bought the marshmallows back from Rin. Full price.
+rin sad | I knew a ball boy who ran onto the board while everyone else was running off it. That's all I know. But it's a lot.
+kai normal | I'm up here, in the stands. I bought the marshmallows back from Rin. At full price.
 rin smug | Fifteen coins. Business is business.
 mira normal | ...Sit down, Kai. The people behind you can't see.
-kai smile | Sitting. Ball boys are very good at sitting.
-rin delighted | Lovely! Panels swap on a beat: click, click, pop. Stay low, build quiet, and let's make the bazaar sing!
+kai smile | Sitting down. Ball boys are very good at sitting.
+rin delighted | Lovely! Panels swap to a beat: click, click, pop! Keep your stack low, build quietly, and let's make this bazaar sing!
 END
 
 SCENE w3_n5_lose 3
 RIGHT rin
-rin smug | Ha! Everything's full price! ...No, it isn't. Sit down. Have a marshmallow. Kai's paying.
+rin smug | Ha! Now everything costs full price! ...No, it doesn't. Sit down and have a marshmallow. Kai's paying.
 END
 
 SCENE w3_clear 3
 RIGHT kai
-rin normal | Bazaar style, yours. Paid in full. Now go and talk to him. This conversation's on the house.
-mira normal | Tell me. All of it. No more figures of speech.
-kai sad | The board was overflowing. Everyone ran. You weren't in the stands, Mira. You'd snuck onto the board to sit with Sena.
-mira shocked | I was on it...?
-kai sad | It was rising under you both. She pushed the last clean piece of the board into your arms and threw you off the edge, at me.
-kai sad | I caught you. Ball boy. Then she looked at me and said "Look after her." And it went gray all the way up. That piece is your box.
-kai normal | I thought if you opened the Commons, it would take you too. So I lost, and forgot maps, and bought awful snacks. I'm sorry.
-mira sad | You carried that by yourself for seven years. I'm still angry. And I'm still going to Cinder Crown.
-kai normal | Then I'm coming. I promised to look after you. She didn't say where.
-mira normal | One condition. You stop deciding things for me. Whatever happens up there, you ask me first. Promise?
-kai smile | I promise. Ask first. ...Can I ask if you want a marshmallow?
-mira smile | No. ...Yes. Signed, sealed, stacked. There. Finished it.
-kai normal | Also, I own eleven teapots now. I don't know what to do about that.
-rin smug | I'll buy them back at half price. ...And since it's confession day: my prices go to the families of the lost.
-rin sad | Taro's mother. The night nurse's wages on the moon. Lamp oil for a lighthouse, every month. That's why I'm broke.
-rin sad | And splitting the worlds was my idea. I gave it to Kaede for free. Cheapest thing I ever sold. It cost the most.
+rin normal | That's my champion's seal. Paid in full. Now go talk to him. This conversation is on the house.
+mira normal | Tell me everything, Kai. No more figures of speech.
+kai sad | The board was overflowing. Everyone was running. You weren't in the stands, Mira. You'd snuck onto the board to sit with Sena.
+mira shocked | I was on the board...?
+kai sad | It was rising under both of you. Sena put the last clean piece of the board in your arms, and then she threw you off the edge, toward me.
+kai sad | I caught you. I was a ball boy, so catching things was my job. She looked at me and said, "Look after {her}." Then everything went gray.
+kai normal | The piece she gave you is the one in your box. I thought opening the Commons would take you too. So I lost, and forgot maps, and bought awful snacks. I'm sorry.
+mira sad | You carried all of that by yourself for seven years. I'm still angry. And I'm still going to Cinder Crown.
+kai normal | Then I'm coming too. I promised I'd look after you. She never said where.
+mira normal | Okay. But from now on, you don't make choices for me. Whatever happens, you ask me first. Promise?
+kai smile | I promise. I'll ask first. ...Can I ask if you want a marshmallow?
+mira smile | No. ...Yes. Signed, sealed, stacked. There. I finished it.
+kai normal | Also, I own eleven teapots now. I don't know what to do with them.
+rin smug | I'll buy them back at half price. And since it's confession day, here's mine. Everything I earn goes to the families of the people we lost.
+rin sad | Taro's mother. The night nurse's pay on the moon. Lamp oil for a lighthouse, every month. That's why I'm always broke.
+rin sad | And splitting the worlds was my idea. I gave it to Kaede for free. It was the cheapest thing I ever sold, and it cost the most.
 END
 
 # =============================================================== WORLD 5: CINDER CROWN (Kaede)
 
 SCENE w4_intro 4
 RIGHT kaede
-mira normal | Cinder Crown. The ground is warm and everything smells like toast. Kai, do volcanoes have a dress code?
-kai normal | Hood up. That's my whole plan for meeting royalty.
-kaede smug | Halt, courier. You stand before Kaede, Queen of Cinder Crown, Warden of the Split, Keeper of the Last Seat.
-kaede normal | You've collected the champions' styles like stamps. Bold. Foolish. Mostly foolish. Fine. A little bold.
-mira angry | You closed the Commons. And you sent a courier after my box, with your seal on the waybill.
-kaede shocked | I did no such... My seal? On a waybill? ...Toma. TOMA.
-luna smug | Hi. Ex-courier on that job. I quit, very dramatically. You'd have loved it.
-kaede normal | I'll speak to my archivist. I've mastered every style, courier. Blocks, panels, capsules. And chains. Especially chains.
-kai normal | The banner behind you says PRACTISE CHAINS DAILY. "Daily" is underlined four times.
-kaede shocked | That banner is decorative. Royalty decorates. Stop reading my walls.
-kai smile | Peace offering, before anyone sends garbage. One pickled marshmallow. My last one, so it's a big gesture.
-kaede sad | ...Nobody has handed me anything in seven years. This is horrifying. It goes in the royal treasury.
-mira normal | Why did you split the worlds?
-kaede sad | So nothing would ever be big enough again. Saki will play you at dawn. Bring every style you've borrowed.
+mira normal | Cinder Crown. The ground is warm, and everything smells like toast. Kai, do you think volcanoes have a dress code?
+kai normal | I'm keeping my hood up. That's my whole plan for meeting royalty.
+kaede smug | Halt, courier! You stand before Kaede, Queen of Cinder Crown, Warden of the Split, Keeper of the Last Seat.
+kaede normal | So, you collected all four champions' seals. That was bold. And foolish. Mostly foolish. ...Fine. A little bold.
+mira angry | You closed the Commons. And you sent a courier after my box, with your seal on the delivery slip!
+kaede shocked | I did no such thing! My seal? On a delivery slip? ...Toma. TOMA!
+luna smug | Hi. I'm the courier who was hired for that job. I quit. Very dramatically. You would have loved it.
+kaede normal | I'll speak with my archivist later. Now, courier. I have mastered every style. Blocks, panels, capsules, and chains. Especially chains.
+kai normal | The banner behind you says "PRACTICE CHAINS EVERY DAY". "Every day" is underlined four times.
+kaede shocked | That banner is a decoration! Royalty decorates! Stop reading my walls!
+kai smile | Here, before anyone sends any garbage. A peace offering. One pickled marshmallow. It's my last one, so it's a big deal.
+kaede sad | ...Nobody has handed me anything in seven years. This is horrifying. I'll keep it in the royal treasury.
+mira normal | Why did you split the worlds apart?
+kaede sad | So no board could ever grow that big again. My court will test you first. My apprentice, Saki, will play you at dawn.
 END
 
 SCENE w4_n0 4
 RIGHT saki
-saki angry | You're the courier who made the Queen pace the gallery all night. Four hundred laps. I counted. I was pacing too.
-mira normal | You must be Saki. Her apprentice?
-saki normal | I practise chains with her every night. She stops at four. Every time. Her hands just... stop.
-saki angry | If you beat her, she'll have nothing left but that chair. So I'm beating you first. Nothing personal. Everything personal.
+saki angry | You're the courier who made the Queen pace the halls all night. Four hundred laps. I counted, because I was pacing too.
+mira normal | You must be Saki, her apprentice.
+saki normal | I practice chains with her every night. She always stops at four. Every single time. Her hands just... stop.
+saki angry | If you beat her, she'll have nothing left except that empty chair. So I'm going to beat you first. It's nothing personal. Well, it's a little personal.
 END
 
 SCENE w4_n0_win 4
 RIGHT saki
-saki sad | You're good. You're really good. ...She's going to lose, isn't she.
+saki sad | You're good. You're really good. ...She's going to lose, isn't she?
 mira normal | Maybe losing isn't the worst thing that could happen to her.
-saki normal | You've never seen her lose. Neither have I. That's the problem.
+saki normal | You've never seen her lose. Neither have I. That's what scares me.
 END
 
 SCENE w4_n0_lose 4
 RIGHT saki
-saki smug | Your quad clears land on me as blobs, and I just pop them. Send in bigger batches, courier.
+saki smug | Your row clears just turn into blobs on my side, and I pop them. Send bigger attacks, courier.
 END
 
 SCENE w4_n1 4
 RIGHT toma
-toma normal | The courier. And the moon girl who returned my fee in a sack marked NO THANK YOU, in very large letters.
+toma normal | Ah, the courier. And the moon girl who returned my fee in a sack labeled "NO THANK YOU" in very large letters.
 luna smug | You're welcome.
-mira angry | You're "T". You put the Queen's seal on a waybill for my box. Why?
-toma sad | I keep the records of every Commons Cup. I wrote the last list of names myself. I cannot write another one.
-toma sad | That piece of the board holds someone. I wrote it on the waybill. I wanted it sealed, so nobody would open the Commons for it.
-toma normal | Beat me, and I'll show you the record of the final. Every move, every tick. The Queen has never read it.
+mira angry | You're "T", aren't you? You put the Queen's seal on a delivery slip for my box. Why?
+toma sad | I am Toma, the archivist. I keep the records of every Commons Cup. I wrote the list of everyone we lost at the last one. I can't write another.
+toma sad | The piece of the board in your box holds someone. I wrote that on the slip. I wanted it locked away, so nobody would reopen the Commons for it.
+toma normal | Beat me, and I'll show you the record of the final. Every move. The Queen has never read it.
 END
 
 SCENE w4_n1_win 4
 RIGHT toma
-toma normal | Very well. The record is yours to read before the Queen's match. I'm old. I've carried it long enough.
+toma normal | Very well. You may read the record before you face the Queen. I'm old, and I've carried it long enough.
 END
 
 SCENE w4_n1_lose 4
 RIGHT toma
-toma normal | Panels can't cancel what you send. Crack my stones and chain them back. I'm old, not forgiving.
+toma normal | Panels can't cancel your attacks, so crack my stones and chain them back at me. I'm old, but I'm not gentle.
 END
 
 SCENE w4_mid 4
 RIGHT kaede
-mira normal | It's midnight. Why is there a match running in the throne room? Who are you playing?
-kaede sad | No one. The seat across from me. I play it every night. It never sends anything back. Superb defense, really.
-mira shocked | That chair's scorched. It's from the final. Kaede, who was supposed to sit there?
-kaede sad | Your sister. Sena. I knew who you were the day you arrived. You tilt your head at a stack exactly the way she did.
+mira normal | It's midnight. Why is there a match running in the throne room? Who are you playing against?
+kaede sad | No one. Just the seat across from me. I play it every night. It never sends anything back. Excellent defense, really.
+mira shocked | That chair is scorched. It's from the final, isn't it? Kaede, who was supposed to sit there?
+kaede sad | Your sister, Sena. I knew who you were the day you arrived. You tilt your head at a stack exactly the way she did.
 mira sad | ...You knew her.
-kaede smile | She was my rival for six years. She hummed the whole time she played, off key. It drove me mad. I'd give the crown to hear it once.
-kaede sad | I sent the last attack. My best chain. The board filled, and kept filling. And then it took her.
-mira angry | So you split the world over it? Nami waits up every night! Yuki hasn't slept in seven years! The Commons went quiet!
-kaede angry | I split it so no board would ever grow big enough to swallow anyone again! Small boards. Safe boards. Lonely boards.
-mira angry | You don't get to be sad about her! She was MY sister! I've talked to a box every night while you sat on a throne!
-kaede sad | I know. I can't even chain anymore. My hands get to four and stop. So I keep her seat warm.
-mira sad | ...You talk to a chair. I talk to a box. We're kind of the same, aren't we.
-kaede sad | Don't be kind to me, courier. Seven years, and the last thing anyone gave me was a marshmallow. I still don't know what to do with it.
+kaede smile | She was my rival for six years. She hummed the whole time she played, always off key. It drove me crazy. I'd give up my crown to hear it again.
+kaede sad | I sent the last attack of the final. It was the best chain I ever made. The board filled up, and kept filling, and then it took her.
+mira angry | So you split the whole world apart because of that? Nami waits up every night! Yuki hasn't slept in seven years! The Commons went silent!
+kaede angry | I split it so no board could ever get big enough to swallow anyone again! Small boards. Safe boards. Lonely boards.
+mira angry | You don't get to be sad about her! She was MY sister! I've been talking to a box every night while you sat on a throne!
+kaede sad | I know. I can't even chain anymore. My hands reach four and stop. So I just keep her seat warm.
+mira sad | ...You talk to a chair. I talk to a box. Maybe we aren't that different.
+kaede sad | Please don't be kind to me, courier. The last kind thing anyone did for me was give me a marshmallow, and I still don't know what to do with it.
 END
 
 SCENE w4_n2 4
 RIGHT luna
-luna normal | You look like you didn't sleep. Good news: neither did they. Saki and the archivist want a two on two.
-mira sad | Luna. Kaede was Sena's rival for six years. She knew her better than I did.
-luna normal | Then she's got stories and you've got a box. Trade later. Play now. I'm your capsule medic today. Yuki would hate my technique.
+luna normal | You look like you didn't sleep. Good news: neither did they. Saki and the archivist want a two-on-two.
+mira sad | Luna, Kaede was Sena's rival for six years. She knew my sister better than I did.
+luna normal | Then she has stories, and you have a box. You can trade later. Right now, let's play. I'll be your capsule medic today.
 END
 
 SCENE w4_n2_win 4
 RIGHT luna
-luna delighted | Bottle clean, blobs gone! Your blocks and my capsules. That's what the Commons was, right? Everyone's mess, one board?
-mira smile | Everyone's mess. Everyone's cleanup.
+luna delighted | Clean bottle, no blobs! Your blocks and my capsules, working together. That's what the Commons was like, right? Everyone on one board?
+mira smile | Everyone making a mess, and everyone cleaning it up.
 END
 
 SCENE w4_n2_lose 4
 RIGHT luna
-luna normal | They're good together. Saki covers his left side like she's been doing it for years. Again.
+luna normal | They're good together. Saki covers his weak side like she's been doing it for years. Let's try again.
 END
 
 SCENE w4_n3 4
 RIGHT toma
-jun sleepy | Hi. I'm on the Queen's side now. Her arena has no leaderboard with Sora on it. It's so quiet. I've slept twice.
-toma normal | Courier. Before the match: the record of the final. Read the last line.
-mira normal | "Tick forty thousand and twelve. Seats sending: forty. Seats clearing: none." ...Everyone was attacking. Nobody was digging.
-toma sad | Her chain was one of forty. The board didn't take Sena because of the Queen. It took her because of all of us. Me too.
-mira sad | And she's never read this. She's carried it alone for seven years.
-kai normal | Mira. Let me take the Chain board today. For real. No more losing by one row.
+jun sleepy | Hi again. I'm on the Queen's side now. Her arena doesn't have a leaderboard with Sora's name on it. It's so peaceful here.
+toma normal | Courier, before the match. Here is the record of the final. Read the last line.
+mira normal | "Final moment. Players sending attacks: forty. Players clearing garbage: none." ...Everyone was attacking. Nobody was digging out.
+toma sad | Her chain was only one of forty. The board didn't take Sena because of the Queen. It took her because of all of us. Including me.
+mira sad | And Kaede has never read this. She's been carrying all of it alone for seven years.
+kai normal | Mira, let me take the Chain board today. For real this time. No more losing by one row.
 END
 
 SCENE w4_n3_win 4
 RIGHT kai
-mira shocked | Kai. That was an eleven-chain. Eleven. It went up the whole board like a staircase.
-kai smile | I had seven years of losing on purpose. I practised winning in secret. On the night train. In the dark.
-mira smug | Taro's train?
-kai normal | We have a club. It's very small. It's me and Taro, and Taro's asleep.
+mira shocked | Kai, that was an eleven-chain! Eleven! It climbed the whole board like a staircase!
+kai smile | I spent seven years losing on purpose. But I practiced winning in secret, on the night train.
+mira smug | Taro's night train?
+kai normal | We have a club. It's very small. It's just me and Taro, and Taro is usually asleep.
 END
 
 SCENE w4_n3_lose 4
 RIGHT kai
-kai normal | I fired too late. Not on purpose, I swear. I was watching their side instead of mine.
+kai normal | I fired too late. Not on purpose, I swear. I was watching their boards instead of mine.
 END
 
 SCENE w4_n4 4
 RIGHT kai
-luna smug | Night before the Queen. Courier tradition: free for all, last one standing picks breakfast.
-mira normal | That's not a tradition.
-luna smug | It is now. I founded it. Just then.
-kai normal | I'm playing Quad. Badly. Not on purpose: naturally. I want that on the record.
-mira smile | Kai. Whatever happens tomorrow, thanks for coming. Even the parts where you got us lost.
-kai smile | I'll get you lost again someday. Somewhere nice. With real food.
+luna smug | It's the night before you face the Queen. Courier tradition says we play a free-for-all, and the winner picks breakfast.
+mira normal | That's not a real tradition.
+luna smug | It is now. I just started it.
+kai normal | I'm playing Quad. Badly. Not on purpose, just naturally. I want that on the record.
+mira smile | Kai, whatever happens tomorrow, thanks for coming with me. Even the parts where you got us lost.
+kai smile | I'll get you lost again someday. Somewhere nice, with real food.
 END
 
 SCENE w4_n4_win 4
 RIGHT kai
-mira delighted | Breakfast is pancakes! Courier's choice!
-luna angry | You buried me in my own capsules! As garbage! That's... that's exactly how the game works. Fine.
-kai smile | Pancakes. Real food. I might cry.
+mira delighted | I win! Breakfast is pancakes!
+luna angry | You buried me under my own capsules! As garbage! That's... exactly how the game works. Fine.
+kai smile | Pancakes. Real food. I might actually cry.
 END
 
 SCENE w4_n4_lose 4
 RIGHT kai
 luna smug | Moon breakfast! Dried moon fruit. It's like a marshmallow, only sadder.
-kai normal | Finally. A worthy rival.
+kai normal | Finally. A snack that's worse than mine.
 END
 
 SCENE w4_boss 4
 RIGHT kaede
-kaede normal | The volcano is waking. It does that when I'm about to do something brave. Or foolish. It can't tell either.
-mira normal | A delivery for the Queen before we start. From your archive. Signature required.
-kaede shocked | The record of the final. I never let Toma open it. I knew what it would say.
-kaede sad | "Seats sending: forty." ...Forty. Saki. Toma. Did you know?
-saki sad | Toma told me last night. It was never just you, Your Majesty.
-toma sad | I should have made you read it seven years ago. I was afraid you'd tear down the crown. I wrote a waybill instead.
-kaede sad | Then play me, courier. Not like a villain. Play me like she did. Just once, I want that seat to answer.
-kai normal | Mira. If this board ever tops out on us, what do you want me to do? I'm asking first.
+kaede normal | The volcano is waking up. It does that whenever I'm about to do something brave. Or foolish. It can't tell the difference either.
+mira normal | Before we start, I have a delivery for the Queen. It's from your archive. Signature required.
+kaede shocked | The record of the final. I never let Toma open it. I was afraid of what it would say.
+kaede sad | "Players sending attacks: forty." Forty... Saki. Toma. Did you know about this?
+saki sad | Toma told me last night. It was never only you, Your Majesty.
+toma sad | I should have made you read it seven years ago. I was afraid it would break you. So I hid it, and wrote a delivery slip instead.
+kaede sad | Then play me, courier. Not like I'm a villain. Play me the way she did. Just once, I want that seat to answer me.
+kai normal | Mira, if this board ever tops out on us, what do you want me to do? I'm asking first, like I promised.
 mira smile | Hold on to me. Don't let go. That's all.
-kai smile | Hold on. Got it. Asked and answered.
-mira delighted | Then here she comes, Your Majesty. Signed, sealed, stacked!
+kai smile | Hold on. Got it.
+mira delighted | Then let's play, Your Majesty. This one's for Sena. Signed, sealed, stacked!
 END
 
 SCENE w4_n5_lose 4
 RIGHT kaede
-kaede normal | The seat stays silent another night. Again, courier. I'm not going anywhere. I never do.
+kaede normal | The seat stays silent for another night. Try again, courier. I'm not going anywhere. I never do.
 END
 
 SCENE w4_clear 4
 RIGHT kaede
-kaede sad | The seat answered. Seven years, and someone finally sent back. That chain was yours. It was hers too. She'd hate how tidy it was.
-kaede sad | Mira. I sent one of those forty attacks, and then I took the Commons from everyone. I'm sorry. I am so sorry.
-mira sad | I forgive you. And I'm sorry I yelled. I came to beat a villain and found someone who misses her as much as I do.
-kaede smile | Then I forgive you for yelling. Queens are rarely yelled at. It was... bracing.
-kaede normal | I will open the Commons. One condition: nobody plays alone on it. Ever again.
-kai normal | Small problem. "Nobody alone" means every champion, and they live in four other worlds. One of them charges for talking.
-rin smug | Reopening fee waived! Today only! You mentioned me, Kai, so that's one coin.
-nami smile | Ahoy. I got your letter, Mira. I went to the moon first. My mother still snores. My father still holds her hand.
-nami normal | Haru is keeping the light. I wrote down exactly how to polish the lens. It's eleven pages.
-hana delighted | I brought everyone. Gerald, Sproutlet, Mrs. Puddle, and a new one. I named him Kaede. He's very shy.
-kaede shocked | He has my frown. Blobs don't have frowns. How does he have my exact frown?
-yuki sleepy | I left the ward a night light and Aoi. Diagnosis: you'll need a doctor. You always need a doctor.
+kaede sad | The seat answered. After seven years, someone finally sent something back. That chain was yours, but it was hers too.
+kaede sad | Mira, I sent one of those forty attacks, and then I took the Commons away from everyone. I'm sorry. I'm so sorry.
+mira sad | I forgive you. And I'm sorry I yelled. I came here to beat a villain, and I found someone who misses her as much as I do.
+kaede smile | Then I forgive you for yelling. Queens don't get yelled at very often. It was... refreshing.
+kaede normal | I will reopen the Commons. On one condition: nobody plays on it alone. Ever again.
+kai normal | Small problem. That means every champion has to come, and they live in four different worlds. One of them charges for talking.
+rin smug | The reopening fee is waived! Today only! But you mentioned me, Kai, so that's one coin.
+nami smile | Ahoy. I got your letter, Mira. I went to the moon first. My mom still snores. My dad still holds her hand.
+nami normal | Haru is looking after the light. I wrote him instructions for polishing the lens. Eleven pages of them.
+hana delighted | I brought everyone! Gerald, Sproutlet, Mrs. Puddle, and a new one. I named him Kaede. He's very shy.
+kaede shocked | He has my frown! Blobs can't frown! How does he have my exact frown?
+yuki sleepy | I left a night light on in the ward, and Aoi is watching it. Diagnosis: you'll need a doctor. You always need a doctor.
 kaede shocked | You all came? I don't have enough chairs. I've only had one spare chair for seven years.
-mira delighted | Then we bring more chairs. Kai, write it on the slip: one Commons, five worlds, zero empty seats.
-kai smile | Written. I also wrote "snacks: Kai". Morale is my department. Nobody voted.
+mira delighted | Then we'll bring more chairs! Kai, write it down: one Commons, five worlds, and no empty seats.
+kai smile | Done. I also wrote "Snacks: Kai". Morale is my job now. Nobody voted. I just took it.
 END
 
 SCENE w4_fall 4
 RIGHT kaede
-mira delighted | The Commons is open! Blocks, blobs, capsules, panels, all on one board! Listen, Kai. It's singing!
-kai smile | It's loud. It's very loud. Okay, it's great. Don't tell anyone I said great.
-emi delighted | I chained first! I don't know what I chained! Am I allowed to chain the whole floor?
-hana normal | Gerald? Why are you shaking? ...Everyone. The old gray rows at the bottom. Nobody ever cleared them.
-yuki shocked | Height: rising. Everyone's attacks are landing at once, on top of seven years of gray. Stop sending! Everyone stop sending!
-kaede shocked | Forty seats sending. It's the final. Off the board, all of you, NOW!
-mira shocked | Kai, I'm slipping! The rows keep pushing me up, I can't stop, I'm at the top line!
-kai normal | Got you. Holding on. Like you said.
-kai normal | Mira. I promised I'd ask first. So I'm asking. Can I look after you?
-mira shocked | Yes! Yes, just PULL!
+mira delighted | The Commons is open! Blocks, blobs, capsules, and panels, all on one board! Listen, Kai! It's singing!
+kai smile | It's loud. It's really loud. Okay, it's great. Don't tell anyone I said that.
+emi delighted | I made the first chain! I don't know what I chained! Am I allowed to chain the whole floor?
+hana normal | Gerald? Why are you shaking? ...Everyone, look. The old gray rows at the bottom. Nobody ever cleared them.
+yuki shocked | The stack is rising. Everyone's attacks are landing at once, on top of seven years of gray. Stop sending! Everyone, stop sending!
+kaede shocked | Forty players attacking at once. It's the final all over again! Everyone, get off the board! NOW!
+mira shocked | Kai, I'm slipping! The rows keep pushing me up! I can't stop! I'm at the top line!
+kai normal | I've got you. I'm holding on, like you asked.
+kai normal | Mira, I promised I'd ask first, so I'm asking. Can I look after you?
+mira shocked | Yes! Yes! Just pull!
 kai smile | Okay. Kaede! Catch!
-kaede shocked | I've got her! I've got her! Kai, your hand!
-kai smile | Look after her, Your Majesty. And don't eat that marshmallow I gave you. It's the worst one. I saved it for royalty.
-nami sad | The board stopped. There's a new gray row at the bottom. It has a streak of blue in it. Hoodie blue.
-mira sad | Kai? You can come out now. Kai. That's not funny. You're always funny. Kai.
+kaede shocked | I've got {her}! I've got {her}! Kai, give me your hand!
+kai smile | Look after {her}, Your Majesty. And don't eat that marshmallow I gave you. It's the worst one. I was saving it for royalty.
+nami sad | The board stopped. There's a new gray row at the bottom. It has a blue streak in it. The same blue as his hoodie.
+mira sad | Kai? You can come out now. Kai, this isn't funny. You're always funny. Kai...
 kaede sad | Not again.
 END
 
 SCENE epilogue 4
 RIGHT kaede nami hana yuki rin
-kaede angry | Nobody goes home. Seven years ago I walked off this board and left someone under it. Not tonight. Not one of us.
-yuki normal | Then listen. Nobody sends. Everybody digs. Clear your own gray, then help the board beside you. Doctor's orders.
-nami normal | Haru's keeping the light burning until everyone's home. Everyone. Follow the beam and dig.
-hana normal | The bottom row is Pebble. Above him, Mr. Sunday. Then Lantern, then Buttons. The blue one is Kai. We dig to Kai.
-rin sad | Take my stones, my charms, my coins, my whole stall. Crack all of it. No charge. Just bring him up.
-saki normal | Your Majesty. Four is where your hands stop. Go to five. I'm right here.
-kaede shocked | One, two, three, four... FIVE! A five-step chain! On a real board! Toma, write that down!
-toma smile | Written, Your Majesty. Rows remaining: nine. I've never been so glad to write a number down.
-yuki sleepy | Nearly dawn. Rows remaining: one. Hoodie blue.
-mira sad | You looked after me for seven years, Kai. Nobody said I couldn't look after you back.
-mira sad | Mei said I'd lose someone at the top and find him at the bottom. This is the bottom, Kai. One more row.
-mira shocked | It's clearing. The blue row's clearing. And the box is warm. Kaede, the box is warm.
+kaede angry | Nobody goes home. Seven years ago, I walked off this board and left someone underneath it. Not tonight. Not one of us.
+yuki normal | Then listen to me. Nobody sends attacks. Everybody digs. Clear your own gray, then help the board next to you. Doctor's orders.
+nami normal | Haru will keep the light burning until everyone is home. Everyone. Follow the beam and keep digging.
+hana normal | The bottom row is Pebble. Above him is Mr. Sunday, then Lantern, then Buttons. The blue row is Kai. We dig down to Kai.
+rin sad | Take my stones, my charms, my coins, my whole stall. Crack all of it. No charge. Just bring him back.
+saki normal | Your Majesty, your hands always stop at four. Go to five this time. I'm right here with you.
+kaede shocked | One, two, three, four... FIVE! A five-chain! On a real board! Toma, write that down!
+toma smile | Written down, Your Majesty. Rows remaining: nine. I've never been so happy to write down a number.
+yuki sleepy | It's almost dawn. Rows remaining: one. The blue one.
+mira sad | Kai, you looked after me for seven years. Nobody ever said I couldn't look after you, too.
+mira sad | Mei told me I'd lose someone at the top and find him at the bottom. This is the bottom, Kai. One more row.
+mira shocked | It's clearing! The blue row is clearing! And the box is warm. Kaede, the box is warm!
 box normal | Mm-mm-mmm, mm-mm...
-sena normal | Hi, Mira. You hum it wrong too. I've held this board up for seven years, and I have one push left. I'm sending him back.
-mira sad | Sena? Wait. Stay. Everyone's here. You don't have to hold it anymore. We've got it. We've all got it.
-sena normal | I know. That's why I can let go. Keep delivering, little courier. Signed, sealed... you finish it.
-kai sleepy | ...Why is everyone staring at me? Did I lose? I feel like I lost. Also, is there food?
+sena normal | Hi, Mira. You hum it wrong too, you know. I've been holding this board up for seven years, and I have one push left. I'm sending him back.
+mira sad | Sena? Wait! Stay! Everyone's here now. You don't have to hold it up anymore. We've got it. All of us.
+sena normal | I know. That's why I can finally let go. Keep delivering, little courier. Signed, sealed... You finish it.
+kai sleepy | ...Why is everyone staring at me? Did I lose? I feel like I lost. Also, is there any food?
 mira delighted | KAI! You absolute idiot! You let go! You said you'd hold on!
 kai smile | You said yes first.
-mira sad | ...Signed, sealed, stacked, Sena. Delivered.
-yuki shocked | Message from Aoi. All twenty-three patients are sitting up and asking for breakfast. The rest of them was in those rows.
-hana smile | And Kiko says the valley stones are gone. Just the flowers left, standing on nothing. They look very pleased.
-nami sad | Then I'd better go home and put out the light. I think I'd like them to watch me do it.
-kaede smile | Rice cakes with honey for everyone. I learned to bake on lonely nights. And Kai: I ate your marshmallow. Worst one.
-kai delighted | This is good. Actually good. Seven years of awful snacks, and all it took was getting swallowed by a board.
-mira delighted | Next delivery: one Commons Cup, every world invited, a crate of rice cakes, and Kai in the stands. In a helmet!
+mira sad | ...Signed, sealed, stacked. Delivered, Sena.
+yuki shocked | I have a message from Aoi. All twenty-three patients are sitting up and asking for breakfast. The missing parts of them were in those gray rows.
+hana smile | And Kiko says the stones in the valley are gone. Only the flowers are left. They look very pleased with themselves.
+nami sad | Then I'd better go home and turn off the light. I think I'd like my parents to watch me do it.
+kaede smile | Rice cakes with honey for everyone! I learned to bake on lonely nights. Oh, and Kai, I ate your marshmallow. You were right. It was the worst one.
+kai delighted | This is good. This is actually good. Seven years of terrible snacks, and all it took was getting swallowed by a board.
+mira delighted | Next delivery: one Commons Cup, every world invited, a crate of rice cakes, and Kai in the stands. Wearing a helmet!
 END

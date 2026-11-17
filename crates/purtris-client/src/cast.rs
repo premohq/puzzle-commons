@@ -12,7 +12,7 @@ pub struct Member {
 }
 
 pub const CAST: &[Member] = &[
-    Member { id: "mira", name: "Mira", title: "Puzzle courier", bio: "Carries the Commons' last puzzle box from world to world. Never met a stack she couldn't flatten.", style: 0, color: 0xFFFF_9FCF },
+    Member { id: "mira", name: "Mira", title: "Puzzle courier", bio: "Carries the Commons' last puzzle box from world to world. Never met a stack {she} couldn't flatten.", style: 0, color: 0xFFFF_9FCF },
     Member { id: "kai", name: "Kai", title: "Mira's oldest friend", bio: "Brings the worst snack every world sells. Loses by exactly one row, every time. Swears that's a coincidence.", style: 1, color: 0xFF7A_A8FF },
     Member { id: "nami", name: "Nami", title: "Lighthouse keeper of Quad Reef", bio: "Keeps the reef's lights burning and its rows perfectly clear. Thinks blocks should only ever fall straight down.", style: 0, color: 0xFF4F_D8E8 },
     Member { id: "hana", name: "Hana", title: "Gardener of Bloom Valley", bio: "Grows chains the way other people grow tomatoes: slowly, carefully, then all at once.", style: 1, color: 0xFF7B_D96A },
@@ -72,4 +72,106 @@ pub const EXPRESSIONS: [&str; 8] = ["normal", "smile", "delighted", "angry", "sa
 /// The story's scenes, parsed once from story.txt (see story.rs).
 pub fn scene(id: &str) -> Option<&'static Scene> {
     crate::story::scenes().iter().find(|s| s.id == id)
+}
+
+// ------------------------------------------------------------------ the protagonist's name
+
+/// What the player named the courier (the card's "hero"); empty means the default, Mira.
+static HERO: std::sync::RwLock<String> = std::sync::RwLock::new(String::new());
+
+pub const HERO_DEFAULT: &str = "Mira";
+pub const HERO_MAX: usize = 10;
+
+static HERO_BOY: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// The courier's model: the player picks the girl (Mira's model) or the boy.
+pub fn set_hero_boy(boy: bool) {
+    HERO_BOY.store(boy, std::sync::atomic::Ordering::Relaxed);
+}
+pub fn hero_boy() -> bool {
+    HERO_BOY.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// The sprite set the courier is drawn with.
+pub fn hero_sprite() -> &'static str {
+    if hero_boy() {
+        "hero_m"
+    } else {
+        "mira"
+    }
+}
+
+pub fn set_hero(name: &str) {
+    if let Ok(mut h) = HERO.write() {
+        *h = name.trim().to_string();
+    }
+}
+
+/// The courier's name as the player chose it.
+pub fn hero() -> String {
+    HERO.read().ok().map(|h| h.clone()).filter(|h| !h.is_empty()).unwrap_or_else(|| HERO_DEFAULT.to_string())
+}
+
+/// A cast member's display name: the courier goes by whatever the player called her.
+pub fn name_of(id: &str) -> String {
+    if id == "mira" {
+        hero()
+    } else {
+        get(id).name.to_string()
+    }
+}
+
+/// Dialogue with the courier's chosen name in place of "Mira" (whole words only, so "Mira's"
+/// and "MIRA" change but nothing that merely contains the letters does).
+pub fn say(text: &str) -> std::borrow::Cow<'_, str> {
+    let hero = hero();
+    let tokens = text.contains('{');
+    if !tokens && (hero == HERO_DEFAULT || !text.contains("Mira") && !text.contains("MIRA")) {
+        return std::borrow::Cow::Borrowed(text);
+    }
+    // pronoun tokens for the courier: {she} {She} {her} (object) {his} {His} (possessive)
+    // {girl} {herself}
+    let boy = hero_boy();
+    let mut text_owned = text.to_string();
+    if tokens {
+        for (tok, girl, b) in [
+            ("{she}", "she", "he"),
+            ("{She}", "She", "He"),
+            ("{her}", "her", "him"),
+            ("{his}", "her", "his"),
+            ("{His}", "Her", "His"),
+            ("{girl}", "girl", "boy"),
+            ("{herself}", "herself", "himself"),
+        ] {
+            text_owned = text_owned.replace(tok, if boy { b } else { girl });
+        }
+    }
+    let text = text_owned.as_str();
+    let mut out = String::with_capacity(text.len() + 8);
+    let mut rest = text;
+    while let Some(k) = rest.find("Mira").into_iter().chain(rest.find("MIRA")).min() {
+        let upper = rest[k..].starts_with("MIRA");
+        let before_ok = rest[..k].chars().next_back().map_or(true, |c| !c.is_alphanumeric());
+        let after_ok = rest[k + 4..].chars().next().map_or(true, |c| !c.is_alphanumeric());
+        out.push_str(&rest[..k]);
+        if before_ok && after_ok {
+            out.push_str(&if upper { hero.to_uppercase() } else { hero.clone() });
+        } else {
+            out.push_str(&rest[k..k + 4]);
+        }
+        rest = &rest[k + 4..];
+    }
+    out.push_str(rest);
+    std::borrow::Cow::Owned(out)
+}
+
+/// Tidy a typed name: letters, spaces, hyphens and apostrophes, first letter capitalized.
+pub fn clean_hero(typed: &str) -> String {
+    let s: String = typed.chars().filter(|c| c.is_alphabetic() || matches!(c, ' ' | '-' | '\'')).take(HERO_MAX).collect();
+    let s = s.trim();
+    let mut c = s.chars();
+    match c.next() {
+        Some(f) => f.to_uppercase().chain(c).collect(),
+        None => String::new(),
+    }
 }

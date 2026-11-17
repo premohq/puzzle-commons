@@ -23,6 +23,28 @@ something by themselves (a light, a field of stones, a ward, a secret, an empty 
 every world ends with someone letting another person share the weight. The Commons died because
 everyone attacked at once and nobody dug; it comes back when everyone digs together.
 
+## The courier
+
+The player names the courier and picks the model: the girl (Mira's model, the default name "Mira") or
+the boy (`hero_m`, the same courier role in a pink hoodie). The choice is made on the naming screen before
+the prologue and can be changed from the player card. In the script the courier is the speaker `mira`;
+"Mira" in any line becomes the chosen name, and lines that talk *about* the courier use pronoun tokens
+({she} {She} {her} {his} {His} {herself} {girl}) that follow the choice. The default text in this bible
+says "Mira" and "she".
+
+## The goal
+
+Queen Kaede's rule: anyone who beats the champion of every world (Nami, Hana, Yuki, Rin) may challenge
+her, after facing her court. Each champion hands over a seal. If the challenger wins, the Commons opens.
+
+## Writing style
+
+Plain, complete, natural English. Short lines, clear sentences, contractions. The structure follows the
+classic puzzle-game story format: a rival introduces themselves in a line or two and the reason to play
+is plain; after the match there's a short reaction; a loss line doubles as a tip. Humor comes from running
+gags and a straight man against a goofball. Mystery clues are dropped as single lines inside comic scenes.
+Emotional moments are short and are followed by a return to normal.
+
 ## The world
 
 Five worlds, each the home of one puzzle style, used to meet once a year at **the Commons**: one huge
@@ -158,7 +180,10 @@ Node indices in ids are 0-based (`w0_n1` is the second match of Quad Reef).
 ## Rules for every line
 
 - Expressions: normal, smile, delighted, angry, sad, shocked, smug, sleepy.
-- Every line must fit three rows of the dialogue box (`--story-check`). Prefer 60-120 characters.
+- Every line must fit three rows of the dialogue box with any name up to 10 letters, as a girl or a
+  boy (`--story-check` tests all four). Prefer 60-120 characters.
+- `--story-check` also takes `+boy`, `+girl`, `+name=X` and `+namescreen` before scene ids, to render
+  frames as a given courier.
 - No narration; everything is spoken. No em dashes. Plain ASCII quotes and apostrophes.
 - `RIGHT` lists who stands on the right; everyone else stands on the left. Voices stand nowhere.
 - Map-card lines (in `content.rs`) must fit two rows, keep the node's mechanic tip, and add a story

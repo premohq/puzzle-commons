@@ -48,8 +48,8 @@ impl App {
         // speech bubble
         self.cv.glass(360, 28, 880, 176, 30, GLASS, 205);
         self.cv.tri([(372.0, 150.0), (344.0, 176.0), (380.0, 170.0)], 0xFF2A_3456, 200);
-        self.cv.text_weight(392, 44, title, 4, l.accent, 255, Weight::Black);
-        self.cv.text_wrap(392, 98, 820, say, 2, l.text);
+        self.cv.text_weight(392, 44, &crate::cast::say(title), 4, l.accent, 255, Weight::Black);
+        self.cv.text_wrap(392, 98, 820, &crate::cast::say(say), 2, l.text);
         // progress dots
         for k in 0..step.1 {
             let on = k == step.0;
@@ -99,9 +99,9 @@ impl App {
                 self.cv.set_clip(422, 238, 756, 416);
                 crate::assets::draw_char(&mut self.cv, m.id, "smile", 590, 980, 820, 255);
                 self.cv.reset_clip();
-                self.cv.text_weight(760, 280, m.name, 5, m.color, 255, Weight::Black);
-                self.cv.text_s(762, 344, m.title, 2, l.text);
-                self.cv.text_wrap(762, 384, 390, m.bio, 2, l.dim);
+                self.cv.text_weight(760, 280, &crate::cast::name_of(m.id), 5, m.color, 255, Weight::Black);
+                self.cv.text_s(762, 344, &crate::cast::say(m.title), 2, l.text);
+                self.cv.text_wrap(762, 384, 390, &crate::cast::say(m.bio), 2, l.dim);
                 ui::choice(&mut self.cv, &l, 1150, 610, &format!("{} of {}", ci + 1, n), true);
             }
             5 => {

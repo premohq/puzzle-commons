@@ -40,8 +40,8 @@
 - **Four puzzle sports, one match:** when everyone plays the same style, the original rules and attack units
   are used (the *authentic path*). When styles mix, attacks pass through a common gauge and arrive as each
   player's own garbage (the *cross path*): your chains land on a Quad player as gray rows.
-- **A story with a heart:** Mira, a puzzle courier, and her friend Kai cross five worlds to reopen the
-  Commons, where every style used to play together. It's funny and cute, with a mystery underneath: why
+- **A story with a heart:** a puzzle courier (Mira by default; you choose the name, and a girl or boy
+  model) and their friend Kai cross five worlds to reopen the Commons, where every style used to play together. It's funny and cute, with a mystery underneath: why
   Queen Kaede split the worlds, what the gray garbage blocks really are, and what Mira carries in her
   puzzle box. Every one of the thirty matches has its own rival with their own reason to play, a short
   scene before it and a reaction the first time you win or lose; the long scenes come at each world's
@@ -122,14 +122,17 @@ people share one keyboard.
 on one huge board. Seven years ago the final went wrong, and afterward Queen Kaede of Cinder Crown split the
 styles into five worlds and closed it.
 
-Mira is seventeen, a courier, and her sister Sena was playing in that final. She's going to reopen the
-Commons. Nobody hired her: she's the client, and she's paying with everything she has. She signs off every
-delivery with "Signed, sealed, stacked!" Her oldest friend Kai comes along with a bag of the worst snack
-each world sells, and has a habit of losing matches by exactly one row.
+You play the courier: Mira by default, but you pick the name and whether you play as a girl or a boy
+before the story starts (and can change both later on your player card). The courier's big sister, Sena, was
+playing in that final. Now the courier carries a box holding the last piece of the Commons board, and Kaede
+has one rule: anyone who beats the champion of every world may challenge her, and if they win, the Commons
+opens again. Nobody hired the courier for this job. The courier is the client, and is paying with every coin
+they have. Every delivery ends with "Signed, sealed, stacked!" Their oldest friend Kai comes along with a bag
+of the worst snack each world sells, and has a habit of losing matches by exactly one row.
 
 The first stop is Quad Reef. Nami keeps the lighthouse lit every night for two people who sailed to the
 final and haven't come home. Haru the ferryman won't row anyone toward the Commons until they've beaten
-him, and two arcade regulars are fighting over the reef's sprint record. And at night Mira's puzzle box
+him, and two arcade regulars are fighting over the reef's sprint record. And at night the courier's puzzle box
 hums the Commons tune, off key, the way someone used to.
 
 The script is plain text in [crates/purtris-client/src/story.txt](crates/purtris-client/src/story.txt),

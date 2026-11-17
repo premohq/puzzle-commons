@@ -135,15 +135,31 @@ pub fn check(dir: &str, width: i32, ids: &[String]) -> i32 {
         }
     }
     let mut lines = 0;
+    // every line must fit with the default name and with a long, wide one, as a girl and a boy
+    let variants = [("Mira", false), ("Mira", true), ("Wwwwwwwwww", false), ("Wwwwwwwwww", true)];
+    let fits = |text: &str, maxw: i32, max_rows: usize| -> Option<String> {
+        for (name, boy) in variants {
+            cast::set_hero(name);
+            cast::set_hero_boy(boy);
+            let said = cast::say(text).into_owned();
+            if said.contains('{') || said.contains('}') {
+                return Some(format!("unknown token in: {}", said));
+            }
+            let rows = wrap(&said, maxw, 3).len();
+            if rows > max_rows {
+                return Some(format!("{} rows (max {}) as {}: {}", rows, max_rows, name, said));
+            }
+        }
+        None
+    };
     for s in &parsed {
         if s.world > 4 {
             errors.push(format!("{}: world {} out of range", s.id, s.world));
         }
         for (k, l) in s.lines.iter().enumerate() {
             lines += 1;
-            let rows = wrap(l.text, 1090, 3).len();
-            if rows > 3 {
-                errors.push(format!("{} line {}: {} rows in the dialogue box (max 3): {}", s.id, k + 1, rows, l.text));
+            if let Some(e) = fits(l.text, 1090, 3) {
+                errors.push(format!("{} line {}: {}", s.id, k + 1, e));
             }
             if l.text.contains('\u{2014}') {
                 errors.push(format!("{} line {}: em dash", s.id, k + 1));
@@ -152,9 +168,8 @@ pub fn check(dir: &str, width: i32, ids: &[String]) -> i32 {
     }
     for (wi, w) in WORLDS.iter().enumerate() {
         for (ni, n) in w.nodes.iter().enumerate() {
-            let rows = wrap(n.line, 960, 2).len();
-            if rows > 2 {
-                errors.push(format!("node {}-{} card: {} rows (max 2): {}", wi, ni, rows, n.line));
+            if let Some(e) = fits(n.line, 960, 2) {
+                errors.push(format!("node {}-{} card: {}", wi, ni, e));
             }
             let seats = n.level.allies.len() + n.level.foes.len();
             if n.who.len() != seats {
@@ -167,6 +182,9 @@ pub fn check(dir: &str, width: i32, ids: &[String]) -> i32 {
             }
         }
     }
+    let card = crate::save::Card::load();
+    cast::set_hero(&card.hero);
+    cast::set_hero_boy(card.hero_boy);
     println!("{} scenes, {} lines", parsed.len(), lines);
     for e in &errors {
         println!("ERROR {}", e);
@@ -179,7 +197,27 @@ pub fn check(dir: &str, width: i32, ids: &[String]) -> i32 {
         app.st.benched = true;
         app.apply_settings();
         app.cv = crate::gfx::Canvas::screen(width);
+        // "+boy", "+girl" and "+name=X" set how the courier is drawn and named for the frames
+        // after them; "+namescreen" renders the naming screen
         for id in ids {
+            if id == "+boy" || id == "+girl" {
+                cast::set_hero_boy(id == "+boy");
+                app.card.hero_boy = id == "+boy";
+                continue;
+            }
+            if let Some(n) = id.strip_prefix("+name=") {
+                cast::set_hero(n);
+                app.card.hero = n.to_string();
+                continue;
+            }
+            if id == "+namescreen" {
+                app.screen = Screen::NameHero { typed: cast::hero(), then: Box::new(Screen::Title) };
+                app.frame(None, 1.0 / 60.0);
+                let p = format!("{}/namescreen_{}.png", dir, if cast::hero_boy() { "boy" } else { "girl" });
+                crate::png::write(&p, app.cv.w as usize, app.cv.h as usize, &app.cv.px).unwrap();
+                println!("wrote {}", p);
+                continue;
+            }
             let Some(sc) = cast::scene(id) else {
                 println!("no scene {}", id);
                 continue;
