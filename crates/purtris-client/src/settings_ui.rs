@@ -39,7 +39,7 @@ fn hz_choices(modes: &[crate::display::Mode]) -> Vec<u32> {
     v
 }
 use crate::theme::{look, Preset, ThemeId};
-use crate::ui::{self, cycle, ListState, GLASS, GLASS_A};
+use crate::ui::{self, cycle, ListState};
 use minifb::Key;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -257,11 +257,11 @@ impl App {
             let revert = nav.back || left <= 0.0;
             self.draw_settings_page(tab, &s, &l, nav, false);
             self.cv.rect_a(0, 0, 1280, 720, 0xFF00_0000, 120);
-            self.cv.glass(390, 250, 500, 210, 28, GLASS, 200);
-            self.cv.text_weight(430, 276, "Keep these display settings?", 3, 0xFFFF_FFFF, 255, Weight::Black);
+            let body = ui::modal(&mut self.cv, 380, 214, 520, 270, "Keep it?");
+            self.cv.text_weight(412, body + 22, "Keep these display settings?", 3, 0xFFFF_FFFF, 255, Weight::Display);
             let msg = format!("Going back to the previous ones in {} s.", left.ceil().max(0.0) as i32);
-            self.cv.text_s(430, 330, &msg, 2, l.dim);
-            ui::choice(&mut self.cv, &l, 860, 400, "Enter: keep     Esc: undo", true);
+            self.cv.text_s(412, body + 76, &msg, 2, l.dim);
+            ui::choice(&mut self.cv, &l, 868, body + 150, "Enter: keep     Esc: undo", true);
             if keep {
                 self.display_undo = None;
                 self.sfx(Sfx::Select);
@@ -386,18 +386,14 @@ impl App {
     fn draw_settings_page(&mut self, tab: usize, s: &ListState, l: &crate::theme::Look, _nav: &Nav, _live: bool) {
         let rows: Vec<&Def> = DEFS.iter().filter(|d| d.tab == tab).collect();
         let (x, w, row_y, row_h) = (80, 720, 196, 58);
-        self.cv.glass(x - 24, row_y - 18, w + 48, rows.len() as i32 * row_h + 36, 26, GLASS, GLASS_A);
+        ui::plate(&mut self.cv, x - 30, row_y - 24, w + 58, rows.len() as i32 * row_h + 42);
         let t = self.t;
         for (i, d) in rows.iter().enumerate() {
             let y = row_y + i as i32 * row_h;
             // no row highlight while the tab bar holds the focus
             let sel = i == s.sel && !self.settings_tabs;
             let cy = y + row_h / 2;
-            if sel {
-                crate::ui::highlight(&mut self.cv, x - 12, y + 4, w + 24, row_h - 8, t);
-            }
-            let col = if d.kind == Kind::Info { l.dim } else if sel { 0xFFFF_FFFF } else { l.text };
-            self.cv.text_weight(x + 6, cy - 12, d.label, 2, col, 255, if sel { Weight::Bold } else { Weight::Regular });
+            ui::setting_row(&mut self.cv, x - 14, y, w + 24, row_h, d.label, sel, d.kind == Kind::Info, l.dim, t);
             let (v, on, n, max) = self.value(d.id);
             let rx = x + w - 4;
             match d.kind {
@@ -418,9 +414,9 @@ impl App {
         }
         // description of the selected setting
         if let Some(d) = rows.get(s.sel) {
-            self.cv.glass(848, 178, 376, 250, 26, GLASS, GLASS_A);
-            self.cv.text_weight(872, 198, d.label, 2, crate::gfx::lighten(crate::ui::section(), 110), 255, Weight::Bold);
-            self.cv.text_wrap(872, 236, 330, d.desc, 2, l.text);
+            ui::plate(&mut self.cv, 848, 172, 376, 256);
+            ui::heading(&mut self.cv, 872, 198, 320, d.label);
+            self.cv.text_wrap(872, 240, 330, d.desc, 2, l.text);
         }
         if self.st.characters {
             crate::assets::draw_char_ex(&mut self.cv, "aoi", "p-rival", 1110, 664, 250, 255, true);
@@ -466,15 +462,12 @@ impl App {
                 next = self.change(cur.id, d);
             }
         }
-        self.cv.glass(x - 24, y - 18, w + 48, rows.len() as i32 * row_h + 36, 26, GLASS, GLASS_A);
+        ui::plate(&mut self.cv, x - 30, y - 24, w + 58, rows.len() as i32 * row_h + 42);
         for (i, d) in rows.iter().enumerate() {
             let ry = y + i as i32 * row_h;
             let cy = ry + row_h / 2;
             let is_sel = i == *sel;
-            if is_sel {
-                crate::ui::highlight(&mut self.cv, x - 12, ry + 4, w + 24, row_h - 8, self.t);
-            }
-            self.cv.text_weight(x + 6, cy - 12, d.label, 2, if is_sel { 0xFFFF_FFFF } else { l.text }, 255, if is_sel { Weight::Bold } else { Weight::Regular });
+            ui::setting_row(&mut self.cv, x - 14, ry, w + 24, row_h, d.label, is_sel, d.kind == Kind::Info, l.dim, self.t);
             let (v, on, n, max) = self.value(d.id);
             let rx = x + w - 4;
             match d.kind {

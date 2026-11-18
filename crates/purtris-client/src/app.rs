@@ -727,6 +727,10 @@ impl App {
 
     pub fn frame(&mut self, win: Option<&minifb::Window>, dt: f32) -> bool {
         self.t += dt;
+        // character motion: the puppet layer on stills, and the 3D clip actors
+        crate::puppet::begin_frame(self.t, self.st.reduce_motion);
+        crate::anim::set_reduce_motion(self.st.reduce_motion || crate::puppet::is_still());
+        crate::anim::sweep();
         let mut script_shots = Vec::new();
         let mut script_quit = false;
         // glass re-snapshots the scene each frame (taken lazily by the first glass panel)
@@ -1224,7 +1228,7 @@ impl App {
             // the host stands beside the tiles, talking you through them
             if self.st.characters {
                 let (id, pose) = HOST_POSE;
-                crate::assets::draw_char_ex(&mut self.cv, id, pose, 1128, 662 + bob(self.t) / 3, 470, 255, true);
+                crate::assets::draw_char_ex(&mut self.cv, id, pose, 1128, 662, 470, 255, true);
             }
             for (i, mc) in MENU_CATS.iter().enumerate() {
                 let (x, y, w, h) = tiles[i];
@@ -1268,7 +1272,7 @@ impl App {
             if self.st.characters {
                 let (id, pose) = mc.mascot;
                 let slide = if self.st.reduce_motion { 0.0 } else { (1.0 - (self.menu_t * 5.0).min(1.0)).powi(2) * 160.0 };
-                crate::assets::draw_char_ex(&mut self.cv, id, pose, 1124 + slide as i32, 662 + bob(self.t) / 3, 480, 255, true);
+                crate::assets::draw_char_ex(&mut self.cv, id, pose, 1124 + slide as i32, 662, 480, 255, true);
             }
             // one label size for the whole page: the big one only if every label fits on a line
             let page_sc = if items.iter().zip(tiles.iter()).all(|((_, lb, _), t)| label_layout(t.2, lb, 3).lines.len() == 1) { 3 } else { 2 };
@@ -1575,8 +1579,8 @@ impl App {
         // node card, kept to the bottom band the maps leave clear
         let n = &w.nodes[node];
         let open = unlocked(&self.prog, world, node);
-        self.cv.glass(40, 532, 1200, 160, 26, ui::GLASS, ui::GLASS_A);
-        self.cv.text_weight(70, 548, &format!("{}.  {}", node + 1, n.name), 3, 0xFFFF_FFFF, 255, Weight::Black);
+        ui::plate(&mut self.cv, 40, 530, 1200, 162);
+        ui::outlined(&mut self.cv, 70, 550, &format!("{}.  {}", node + 1, n.name), 3, 0xFFFF_FFFF, darken(ui::section(), 140), 2, Weight::Display);
         let kind = match (n.level.mode, n.level.foes.len(), n.level.allies.len()) {
             (Mode::CapsuleRace, _, _) => "Capsule race".to_string(),
             (m, 0, _) if m.is_solo() => m.name().to_string(),
@@ -1587,10 +1591,10 @@ impl App {
         let rid = crate::content::node_rival(world, node);
         let rname = crate::cast::name_of(rid);
         if self.st.characters {
+            // the rival in their signature pose, in their world's light, with a name plate in the
+            // section color (idle motion: anim.rs / puppet.rs)
             crate::light::set(crate::light::world(world.min(4), crate::light::Mood::Day));
-            // the rival in their signature pose, with a name plate in the section color
-            let bob = if self.st.reduce_motion { 0 } else { ((self.t * 2.0).sin() * 2.0) as i32 };
-            crate::assets::draw_char_ex(&mut self.cv, rid, "p-rival", 1140, 676 + bob, 400, 255, true);
+            crate::assets::draw_char_ex(&mut self.cv, rid, "p-rival", 1140, 676, 400, 255, true);
             let tag = format!("Rival  {}", if crate::assets::is_hidden(rid) { "???".to_string() } else { rname });
             let tw = Canvas::text_wb(&tag, 2, Weight::Display) + 40;
             let c = ui::section();
@@ -2223,14 +2227,17 @@ impl App {
         crate::assets::draw_char(&mut self.cv, "mira", expr, 190, 712 + bob, 640, 255);
         // lesson title strip
         let title = ui::title_case(le.title);
-        self.cv.glass(360, 24, 880, 76, 28, ui::GLASS, 190);
-        self.cv.text_weight(392, 36, &title, 3, 0xFFFF_FFFF, 255, Weight::Black);
+        ui::plate(&mut self.cv, 360, 22, 880, 84);
+        ui::outlined(&mut self.cv, 392, 40, &title, 3, 0xFFFF_FFFF, darken(ui::section(), 140), 2, Weight::Display);
         let sub = format!("{}  /  {}", ui::title_case(le.track), ui::title_case(le.tier));
-        self.cv.text_s(392, 72, &sub, 1, l.dim);
+        let sw = Canvas::text_wb(&sub, 1, Weight::Bold) + 24;
+        self.cv.round_rect(1240 - sw - 24, 52, sw, 26, 13, ui::section(), 255);
+        self.cv.text_weight(1240 - sw - 12, 58, &sub, 1, 0xFFFF_FFFF, 255, Weight::Bold);
         // Mira's speech bubble with the current part
-        self.cv.glass(360, 118, 880, 300, 30, ui::GLASS, 205);
-        self.cv.tri([(372.0, 380.0), (344.0, 406.0), (380.0, 400.0)], 0xFF2A_3456, 200);
-        self.cv.text_weight(392, 136, &format!("{}.  {}", page + 1, head), 3, l.accent, 255, Weight::Black);
+        ui::plate(&mut self.cv, 360, 122, 880, 296);
+        self.cv.tri([(368.0, 372.0), (334.0, 404.0), (378.0, 396.0)], 0xFFFF_FFFF, 255);
+        self.cv.tri([(371.0, 376.0), (342.0, 400.0), (376.0, 393.0)], ui::plate_color(), 255);
+        ui::outlined(&mut self.cv, 392, 144, &format!("{}.  {}", page + 1, head), 3, lighten(ui::section(), 150), darken(ui::section(), 140), 2, Weight::Display);
         self.cv.text_wrap(392, 186, 820, &crate::cast::say(body), 2, l.text);
         for k in 0..parts.len() {
             let on = k == page;
@@ -2656,8 +2663,20 @@ impl App {
                 };
                 let right = k == 1 || (active.len() == 1 && false);
                 let cx = if right { if crowd { 1180 } else { 1150 } } else if crowd { 100 } else { 130 };
-                let bob = if self.st.reduce_motion { 0 } else { ((self.t * 1.6 + k as f32).sin() * 3.0) as i32 };
-                crate::assets::draw_char_ex(&mut self.cv, member.id, expr, cx, 712 + bob, if crowd { 520 } else { 600 }, 255, right);
+                let ch = if crowd { 520 } else { 600 };
+                if crate::anim::has_clips(member.id) {
+                    // 3D motion clips (anim.rs); reactions come from game.rs events
+                    let mood = match expr {
+                        "delighted" => crate::anim::Mood::Win,
+                        "sad" => crate::anim::Mood::Lose,
+                        "shocked" => crate::anim::Mood::Worried,
+                        _ => crate::anim::Mood::Idle,
+                    };
+                    crate::anim::draw(&mut self.cv, &format!("seat{}", i), member.id, mood, cx, 712, ch, 255, right);
+                } else {
+                    // the still, moved by the puppet layer (puppet.rs)
+                    crate::assets::draw_char_ex(&mut self.cv, member.id, expr, cx, 712, ch, 255, right);
+                }
                 let mname = crate::cast::name_of(member.id);
                 let nw = Canvas::text_wb(&mname, 2, crate::font::Weight::Black) + 36;
                 self.cv.round_grad(cx - nw / 2, 640, nw, 36, 18, crate::gfx::lighten(member.color, 40), member.color, 255);
@@ -3169,8 +3188,13 @@ impl App {
         self.bg(0.0);
         let l = look(self.st.theme);
         ui::title(&mut self.cv, "CONTROLS", "", &l);
-        let names = ["KEYBOARD (ONE PLAYER)", "KEYBOARD LEFT (WASD SIDE)", "KEYBOARD RIGHT (ARROWS SIDE)"];
-        self.cv.text_s(90, 120, &format!("\u{2190} {} \u{2192}", names[layout]), 2, l.accent);
+        // the keyboard layouts as tabs: left / right (or a click) switch between them
+        let names = ["Keyboard (one player)", "Left side (WASD)", "Right side (arrows)"];
+        if waiting.is_none() {
+            if let Some(t) = ui::tabs_ex(&mut self.cv, &l, &names, layout, 94, nav.mouse, nav.click, Some(self.t)) {
+                layout = t;
+            }
+        }
         if let Some(a) = waiting {
             ui::panel(&mut self.cv, 340, 280, 600, 140, &l);
             self.cv.text_center(640, 310, &format!("PRESS A KEY FOR: {}", ACTIONS[a].name().to_uppercase()), 2, l.accent);
@@ -3197,10 +3221,10 @@ impl App {
             })
             .collect();
         rows.push(Row::act("BACK"));
-        let g = ListGeom { x: 90, y: 160, w: 760, row_h: 36, visible: 12, scale: 2 };
+        let g = ListGeom { x: 90, y: 186, w: 760, row_h: 36, visible: 12, scale: 2 };
         let ev = list(&mut self.cv, &l, nav, &rows, &mut s, &g, self.t);
         ui::prompts(&mut self.cv, &l, &[("\u{2190}\u{2192}", "Layout"), ("\u{2191}\u{2193}", "Choose"), ("Enter", "Rebind"), ("Del", "Reset"), ("Esc", "Back")]);
-        ui::panel(&mut self.cv, 890, 160, 350, 440, &l);
+        ui::panel(&mut self.cv, 890, 164, 350, 460, &l);
         let pad = [
             "Gamepad (auto-detected):",
             "D-pad      move / cursor",
@@ -3215,9 +3239,9 @@ impl App {
         ];
         for (k, t) in pad.iter().enumerate() {
             let (a, b) = t.split_at(t.find("  ").unwrap_or(t.len()));
-            self.cv.text_s(912, 182 + k as i32 * 40, a.trim(), 2, if k == 0 { l.accent } else { 0xFFFF_FFFF });
+            self.cv.text_s(912, 192 + k as i32 * 40, a.trim(), 2, if k == 0 { crate::gfx::lighten(ui::section(), 120) } else { 0xFFFF_FFFF });
             if !b.trim().is_empty() {
-                self.cv.text_s(1030, 182 + k as i32 * 40, b.trim(), 2, l.text);
+                self.cv.text_s(1030, 192 + k as i32 * 40, b.trim(), 2, l.text);
             }
         }
         if nav.right || self.input.key_pressed(Key::E) {
@@ -3285,10 +3309,15 @@ impl App {
         // the card
         let (cx, cy) = (760, 150);
         let accent = [crate::theme::CYAN, crate::theme::GREEN, crate::theme::PINK, crate::theme::YELLOW][self.card.favorite % 4];
-        self.cv.round_rect(cx - 6, cy - 6, 432, 492, 26, accent, 230);
-        self.cv.glass(cx, cy, 420, 480, 22, ui::GLASS, 200);
-        crate::assets::draw_char(&mut self.cv, "mira", "smile", cx + 210, cy + 250, 230, 255);
-        self.cv.text_center(cx + 210, cy + 262, &self.card.name, 4, l.accent);
+        ui::plate(&mut self.cv, cx, cy, 420, 480);
+        // the card's face: a window in the favourite style's color
+        self.cv.round_grad(cx + 24, cy + 24, 372, 236, 16, lighten(accent, 40), darken(accent, 60), 255);
+        ui::halftone(&mut self.cv, cx + 24, cy + 24, 372, 236, 0, lighten(accent, 90), 120, 11, 3.6, 0.4);
+        self.cv.set_clip(cx + 24, cy + 24, 372, 236);
+        crate::assets::draw_char(&mut self.cv, "mira", "smile", cx + 210, cy + 400, 380, 255);
+        self.cv.reset_clip();
+        let nw = Canvas::text_wb(&self.card.name, 4, crate::font::Weight::Display);
+        ui::outlined(&mut self.cv, cx + 210 - nw / 2, cy + 272, &self.card.name, 4, 0xFFFF_FFFF, darken(accent, 150), 3, crate::font::Weight::Display);
         self.cv.text_center(cx + 210, cy + 308, &format!("Favorite: {}", ui::title_case(Style::ALL[self.card.favorite % 4].name())), 2, l.text);
         if !self.card.country.is_empty() {
             self.cv.text_center(cx + 210, cy + 336, &self.card.country, 2, l.dim);

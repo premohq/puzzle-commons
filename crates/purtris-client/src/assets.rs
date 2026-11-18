@@ -419,22 +419,43 @@ pub fn draw_char(cv: &mut Canvas, name: &str, expr: &str, cx: i32, bottom: i32, 
 
 #[allow(clippy::too_many_arguments)]
 pub fn draw_char_ex(cv: &mut Canvas, name: &str, expr: &str, cx: i32, bottom: i32, h: i32, alpha: u32, flip: bool) {
+    // characters with 3D motion clips play them (anim.rs): real idles in every menu; locked
+    // bosses are drawn as silhouettes by draw_still
+    if !is_hidden(name) && crate::anim::draw_auto(cv, name, expr, cx, bottom, h, alpha, flip) {
+        return;
+    }
+    draw_still(cv, name, expr, cx, bottom, h, alpha, flip);
+}
+
+/// The still for `expr`, moved by the puppet layer (puppet.rs).
+#[allow(clippy::too_many_arguments)]
+pub fn draw_still(cv: &mut Canvas, name: &str, expr: &str, cx: i32, bottom: i32, h: i32, alpha: u32, flip: bool) {
     let Some(key) = cast_key(name, expr, false) else { return };
     // creatures are square renders: draw them a bit smaller than people
     let h = if is_creature(name) { h * 11 / 20 } else { h };
     let ph = cv.us(h);
     let (cxp, bp) = (cv.u(cx), cv.u(bottom));
     let k = cv.k;
-    let hidden = is_hidden(name);
-    with_cast(key, ph, flip, |img| {
-        // soft contact shadow under the feet, then the character
-        cv.ellipse(cx as f32, bottom as f32 - 4.0, img.w as f32 / k * 0.26, (h as f32 * 0.022).max(3.0), 0xFF00_0000, alpha / 3);
-        if hidden {
+    // locked bosses stay a silhouette (no motion, nothing to read); everyone else is the still
+    // moved by the puppet layer (puppet.rs): breathing, sway, reactions, expression crossfades
+    if is_hidden(name) {
+        with_cast(key, ph, flip, |img| {
+            cv.ellipse(cx as f32, bottom as f32 - 4.0, img.w as f32 / k * 0.26, (h as f32 * 0.022).max(3.0), 0xFF00_0000, alpha / 3);
             silhouette(cv, img, cxp - img.w / 2, bp - img.h, alpha);
-        } else {
-            cv.blit_px(img, cxp - img.w / 2, bp - img.h, alpha);
-        }
+        });
+        return;
+    }
+    // the puppet layer (puppet.rs): breathing, sway, reactions, a crossfade between expressions
+    let mo = crate::puppet::motion(name, key, expr, false, cx, bottom, h);
+    with_cast(key, ph, flip, |img| {
+        // soft contact shadow under the feet (smaller and lighter while airborne), then the character
+        let air = (1.0 - mo.pose.lift.max(0.0) * 6.0).clamp(0.4, 1.0);
+        cv.ellipse(cx as f32, bottom as f32 - 4.0, img.w as f32 / k * 0.26 * mo.pose.sx * air, (h as f32 * 0.022).max(3.0) * air, 0xFF00_0000, (alpha as f32 / 3.0 * air) as u32);
+        crate::puppet::blit(cv, img, cxp, bp, alpha, &mo.pose);
     });
+    if let Some((pk, m)) = mo.prev {
+        with_cast(pk, ph, flip, |img| crate::puppet::blit(cv, img, cxp, bp, (alpha as f32 * m) as u32, &mo.pose));
+    }
 }
 
 /// Light and size a standing sprite now, so drawing it later costs nothing.
@@ -450,14 +471,20 @@ pub fn draw_portrait(cv: &mut Canvas, name: &str, expr: &str, x: i32, y: i32, si
     let Some(key) = cast_key(name, expr, true) else { return };
     let ph = cv.us(size);
     let (xp, yp) = (cv.u(x), cv.u(y));
-    let hidden = is_hidden(name);
-    with_cast(key, ph, flip, |img| {
-        if hidden {
-            silhouette(cv, img, xp + (ph - img.w) / 2, yp, alpha);
-        } else {
-            cv.blit_px(img, xp + (ph - img.w) / 2, yp, alpha);
-        }
-    });
+    if is_hidden(name) {
+        with_cast(key, ph, flip, |img| silhouette(cv, img, xp + (ph - img.w) / 2, yp, alpha));
+        return;
+    }
+    // small icons stay crisp; bigger portraits breathe and react like the full figures
+    if size < 90 {
+        with_cast(key, ph, flip, |img| cv.blit_px(img, xp + (ph - img.w) / 2, yp, alpha));
+        return;
+    }
+    let mo = crate::puppet::motion(name, key, expr, true, x + size / 2, y + size, size);
+    with_cast(key, ph, flip, |img| crate::puppet::blit(cv, img, xp + ph / 2, yp + img.h, alpha, &mo.pose));
+    if let Some((pk, m)) = mo.prev {
+        with_cast(pk, ph, flip, |img| crate::puppet::blit(cv, img, xp + ph / 2, yp + img.h, (alpha as f32 * m) as u32, &mo.pose));
+    }
 }
 
 /// The rival who waits in each story world.

@@ -195,6 +195,28 @@ impl Game {
         r.on_events(&self.m, st);
         let mut sfx: Vec<Sfx> = Vec::new();
         let many = self.m.active_count() > 2;
+        // the characters beside the boards react: 3D clip actors (anim.rs, slot "seatN") and the
+        // puppet layer for stills (puppet.rs); nothing happens when no characters are shown
+        for (s, e) in &self.m.events {
+            use crate::puppet::React as P;
+            let si = *s as usize;
+            let id = crate::cast::CAST[self.chars[si].min(crate::cast::CAST.len() - 1)].id;
+            let slot = format!("seat{}", si);
+            // seat 0 stands on the left, facing right, toward the boards
+            let toward = if si == 0 { 1.0 } else { -1.0 };
+            match e {
+                Ev::AttackSent { units } if *units >= 2 => {
+                    crate::anim::react(&slot, crate::anim::React::Attack((*units as f32 / 8.0).min(1.0)), toward);
+                    crate::puppet::react(id, P::Pump);
+                }
+                Ev::GarbageLand { n } if *n >= 1 => {
+                    crate::anim::react(&slot, crate::anim::React::Hit((*n as f32 / 6.0).min(1.0)), toward);
+                    crate::puppet::react(id, P::Flinch);
+                }
+                Ev::AllClear | Ev::LevelClear => crate::puppet::react(id, P::Cheer),
+                _ => {}
+            }
+        }
         for (s, e) in &self.m.events {
             let si = *s as usize;
             let mine = self.humans[si] || self.playback.is_some() && si == 0;

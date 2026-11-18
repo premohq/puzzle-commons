@@ -3,6 +3,7 @@
 
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
+mod anim;
 mod app;
 mod assets;
 mod audio;
@@ -40,6 +41,7 @@ pub fn now_seed() -> u64 {
 }
 
 mod png;
+mod puppet;
 mod pool;
 mod prof;
 mod shots;
@@ -51,6 +53,10 @@ mod story_ui;
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
+    // documentation and check frames show every character in its rest pose
+    if matches!(args.get(1).map(|s| s.as_str()), Some("--shots" | "--fx-shots" | "--light-shots" | "--scene-shots" | "--story-check" | "--banner")) {
+        puppet::set_still(true);
+    }
     if args.get(1).map(|a| a == "--fx-shots").unwrap_or(false) {
         let w = args.get(3).and_then(|s| s.parse().ok()).unwrap_or(1920);
         shots::fx_shots(args.get(2).map(|s| s.as_str()).unwrap_or("shots"), w, args.get(4).map(|s| s.as_str()));
@@ -92,6 +98,11 @@ fn main() {
         for md in display::modes() {
             println!("  {}x{} @ {:.2} Hz", md.w, md.h, md.hz);
         }
+        return;
+    }
+    if args.get(1).map(|a| a == "--anim-shots").unwrap_or(false) {
+        let w = args.get(3).and_then(|s| s.parse().ok()).unwrap_or(1280);
+        shots::anim_shots(args.get(2).map(|s| s.as_str()).unwrap_or("anim-shots"), w);
         return;
     }
     if args.get(1).map(|a| a == "--banner").unwrap_or(false) {
