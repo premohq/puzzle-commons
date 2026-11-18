@@ -7,7 +7,7 @@ use crate::gfx::Canvas;
 use crate::input::Nav;
 use crate::ranks::{self, BOARDS, MAX_LEVEL, PRESTIGE};
 use crate::theme::look;
-use crate::ui::{self, ListState, GLASS, GLASS_A};
+use crate::ui::{self, ListState};
 use minifb::Key;
 
 /// A round level badge: prestige-colored ring, the level inside, one pip per prestige.
@@ -52,7 +52,7 @@ impl App {
         let r = &self.ranks;
         if page == 0 {
             // profile: the badge, the bar, the title and the prestige track
-            self.cv.glass(80, 140, 700, 520, 30, GLASS, GLASS_A);
+            crate::ui::plate(&mut self.cv, 80, 140, 700, 520);
             level_badge(&mut self.cv, 210, 290, 90, r.level, r.prestige);
             let (pname, pcol) = PRESTIGE[r.prestige as usize];
             self.cv.text_weight(330, 200, ranks::title(r.level), 4, 0xFFFF_FFFF, 255, Weight::Black);
@@ -86,9 +86,9 @@ impl App {
                 format!("Prestige to {}  (Enter)", PRESTIGE[r.prestige as usize + 1].0)
             };
             let w = Canvas::text_wb(&label, 2, Weight::Bold) + 48;
-            self.cv.glass(840, 560, w.min(400), 56, 28, GLASS, 200);
-            if can {
-                self.cv.round_rect(840, 560, w.min(400), 56, 28, if confirm { l.warn } else { l.accent }, 70);
+            crate::ui::row_slab(&mut self.cv, 840, 560, w.min(400), 56, can, self.t);
+            if can && confirm {
+                self.cv.poly(&crate::ui::slant(840, 560, w.min(400), 56, 14), l.warn, 90);
             }
             self.cv.set_clip(840, 560, 400, 56);
             self.cv.text_weight(864, 574, &label, 2, if can { 0xFFFF_FFFF } else { l.dim }, 255, Weight::Bold);
@@ -111,7 +111,7 @@ impl App {
             let b = &BOARDS[page - 1];
             let empty = Vec::new();
             let list = r.boards.get(b.id).unwrap_or(&empty);
-            self.cv.glass(60, 140, 880, 530, 30, GLASS, GLASS_A);
+            crate::ui::plate(&mut self.cv, 60, 140, 880, 530);
             let cols = [("#", 92), ("Player", 200), ("Level", 520), (if b.lower { "Time" } else { "Best" }, 740), ("Date", 860)];
             for (h, x) in cols {
                 self.cv.text_weight(x, 158, h, 1, l.accent, 255, Weight::Bold);
@@ -147,7 +147,7 @@ impl App {
                 self.cv.text_s(860, y + 11, &when, 1, l.dim);
             }
             // side card: your best and level
-            self.cv.glass(980, 140, 250, 300, 26, GLASS, GLASS_A);
+            crate::ui::plate(&mut self.cv, 980, 140, 250, 300);
             level_badge(&mut self.cv, 1105, 220, 48, r.level, r.prestige);
             self.cv.text_weight(1000, 286, &me, 2, 0xFFFF_FFFF, 255, Weight::Black);
             self.cv.text_s(1000, 320, ranks::title(r.level), 1, l.dim);

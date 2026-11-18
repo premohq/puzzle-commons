@@ -9,7 +9,7 @@ use crate::gfx::Canvas;
 use crate::input::{Device, Nav};
 use crate::settings_ui::Id;
 use crate::theme::{self, look, CellKind, SpriteKey};
-use crate::ui::{self, ListState, GLASS, GLASS_A};
+use crate::ui::{self, ListState, GLASS};
 
 thread_local! {
     static THUMBS: std::cell::RefCell<std::collections::HashMap<(usize, i32), Canvas>> = std::cell::RefCell::new(std::collections::HashMap::new());
@@ -46,9 +46,10 @@ impl App {
         let bob = if self.st.reduce_motion { 0 } else { ((self.t * 1.8).sin() * 3.0) as i32 };
         crate::assets::draw_char(&mut self.cv, "mira", expr, 190, 712 + bob, 640, 255);
         // speech bubble
-        self.cv.glass(360, 28, 880, 176, 30, GLASS, 205);
-        self.cv.tri([(372.0, 150.0), (344.0, 176.0), (380.0, 170.0)], 0xFF2A_3456, 200);
-        self.cv.text_weight(392, 44, &crate::cast::say(title), 4, l.accent, 255, Weight::Black);
+        ui::plate(&mut self.cv, 360, 28, 880, 176);
+        self.cv.tri([(366.0, 146.0), (334.0, 178.0), (378.0, 170.0)], 0xFFFF_FFFF, 255);
+        self.cv.tri([(369.0, 150.0), (342.0, 174.0), (376.0, 167.0)], ui::plate_color(), 255);
+        ui::outlined(&mut self.cv, 392, 48, &crate::cast::say(title), 4, crate::gfx::lighten(ui::section(), 150), crate::gfx::darken(ui::section(), 140), 3, Weight::Display);
         self.cv.text_wrap(392, 98, 820, &crate::cast::say(say), 2, l.text);
         // progress dots
         for k in 0..step.1 {
@@ -103,7 +104,7 @@ impl App {
                 }
                 self.card.character = CAST[ci].id.to_string();
                 let m = &CAST[ci];
-                self.cv.glass(420, 236, 760, 420, 28, GLASS, GLASS_A);
+                ui::plate(&mut self.cv, 420, 236, 760, 420);
                 self.cv.set_clip(422, 238, 756, 416);
                 crate::assets::draw_char(&mut self.cv, m.id, "smile", 590, 980, 820, 255);
                 self.cv.reset_clip();
@@ -121,10 +122,7 @@ impl App {
                 for (k, o) in opts.iter().enumerate() {
                     let y = 300 + k as i32 * 86;
                     let on = k == sel.min(1);
-                    self.cv.glass(500, y, 600, 66, 33, GLASS, if on { 120 } else { 190 });
-                    if on {
-                        self.cv.round_rect(500, y, 600, 66, 33, l.accent, 60);
-                    }
+                    ui::row_slab(&mut self.cv, 500, y, 600, 66, on, self.t);
                     self.cv.text_weight(540, y + 17, o, 3, if on { 0xFFFF_FFFF } else { l.text }, 255, Weight::Bold);
                 }
             }
@@ -132,8 +130,9 @@ impl App {
                 let msg = "Press Enter, A, or click to begin";
                 let w = Canvas::text_wb(msg, 3, Weight::Bold) + 60;
                 let a = (((self.t * 2.5).sin() * 0.5 + 0.5) * 155.0 + 100.0) as u32;
-                self.cv.glass(800 - w / 2, 420, w, 64, 32, GLASS, 200);
-                self.cv.text_weight(800 - w / 2 + 30, 436, msg, 3, l.accent, a, Weight::Bold);
+                ui::row_slab(&mut self.cv, 800 - w / 2, 420, w, 64, true, self.t);
+                let _ = a;
+                ui::outlined(&mut self.cv, 800 - w / 2 + 30, 434, msg, 3, 0xFFFF_FFFF, crate::gfx::darken(ui::section(), 140), 2, Weight::Display);
                 forward = forward || nav.click;
             }
         }
@@ -164,7 +163,7 @@ impl App {
         self.bg_blur(40);
         let p = &TOUR[page.min(TOUR.len() - 1)];
         self.mira_says(p.title, p.expr, p.say, (page, TOUR.len()));
-        self.cv.glass(400, 230, 840, 430, 28, GLASS, GLASS_A);
+        ui::plate(&mut self.cv, 400, 230, 840, 430);
         match page {
             0 => self.diagram_styles(t),
             1 => self.diagram_cross(t),
