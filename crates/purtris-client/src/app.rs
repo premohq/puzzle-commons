@@ -727,6 +727,10 @@ impl App {
 
     pub fn frame(&mut self, win: Option<&minifb::Window>, dt: f32) -> bool {
         self.t += dt;
+        // character motion: the puppet layer on stills, and the 3D clip actors
+        crate::puppet::begin_frame(self.t, self.st.reduce_motion);
+        crate::anim::set_reduce_motion(self.st.reduce_motion || crate::puppet::is_still());
+        crate::anim::sweep();
         let mut script_shots = Vec::new();
         let mut script_quit = false;
         // glass re-snapshots the scene each frame (taken lazily by the first glass panel)
@@ -1224,7 +1228,7 @@ impl App {
             // the host stands beside the tiles, talking you through them
             if self.st.characters {
                 let (id, pose) = HOST_POSE;
-                crate::assets::draw_char_ex(&mut self.cv, id, pose, 1128, 662 + bob(self.t) / 3, 470, 255, true);
+                crate::assets::draw_char_ex(&mut self.cv, id, pose, 1128, 662, 470, 255, true);
             }
             for (i, mc) in MENU_CATS.iter().enumerate() {
                 let (x, y, w, h) = tiles[i];
@@ -1268,7 +1272,7 @@ impl App {
             if self.st.characters {
                 let (id, pose) = mc.mascot;
                 let slide = if self.st.reduce_motion { 0.0 } else { (1.0 - (self.menu_t * 5.0).min(1.0)).powi(2) * 160.0 };
-                crate::assets::draw_char_ex(&mut self.cv, id, pose, 1124 + slide as i32, 662 + bob(self.t) / 3, 480, 255, true);
+                crate::assets::draw_char_ex(&mut self.cv, id, pose, 1124 + slide as i32, 662, 480, 255, true);
             }
             // one label size for the whole page: the big one only if every label fits on a line
             let page_sc = if items.iter().zip(tiles.iter()).all(|((_, lb, _), t)| label_layout(t.2, lb, 3).lines.len() == 1) { 3 } else { 2 };
@@ -1587,10 +1591,10 @@ impl App {
         let rid = crate::content::node_rival(world, node);
         let rname = crate::cast::name_of(rid);
         if self.st.characters {
+            // the rival in their signature pose, in their world's light, with a name plate in the
+            // section color (idle motion: anim.rs / puppet.rs)
             crate::light::set(crate::light::world(world.min(4), crate::light::Mood::Day));
-            // the rival in their signature pose, with a name plate in the section color
-            let bob = if self.st.reduce_motion { 0 } else { ((self.t * 2.0).sin() * 2.0) as i32 };
-            crate::assets::draw_char_ex(&mut self.cv, rid, "p-rival", 1140, 676 + bob, 400, 255, true);
+            crate::assets::draw_char_ex(&mut self.cv, rid, "p-rival", 1140, 676, 400, 255, true);
             let tag = format!("Rival  {}", if crate::assets::is_hidden(rid) { "???".to_string() } else { rname });
             let tw = Canvas::text_wb(&tag, 2, Weight::Display) + 40;
             let c = ui::section();
@@ -2659,8 +2663,20 @@ impl App {
                 };
                 let right = k == 1 || (active.len() == 1 && false);
                 let cx = if right { if crowd { 1180 } else { 1150 } } else if crowd { 100 } else { 130 };
-                let bob = if self.st.reduce_motion { 0 } else { ((self.t * 1.6 + k as f32).sin() * 3.0) as i32 };
-                crate::assets::draw_char_ex(&mut self.cv, member.id, expr, cx, 712 + bob, if crowd { 520 } else { 600 }, 255, right);
+                let ch = if crowd { 520 } else { 600 };
+                if crate::anim::has_clips(member.id) {
+                    // 3D motion clips (anim.rs); reactions come from game.rs events
+                    let mood = match expr {
+                        "delighted" => crate::anim::Mood::Win,
+                        "sad" => crate::anim::Mood::Lose,
+                        "shocked" => crate::anim::Mood::Worried,
+                        _ => crate::anim::Mood::Idle,
+                    };
+                    crate::anim::draw(&mut self.cv, &format!("seat{}", i), member.id, mood, cx, 712, ch, 255, right);
+                } else {
+                    // the still, moved by the puppet layer (puppet.rs)
+                    crate::assets::draw_char_ex(&mut self.cv, member.id, expr, cx, 712, ch, 255, right);
+                }
                 let mname = crate::cast::name_of(member.id);
                 let nw = Canvas::text_wb(&mname, 2, crate::font::Weight::Black) + 36;
                 self.cv.round_grad(cx - nw / 2, 640, nw, 36, 18, crate::gfx::lighten(member.color, 40), member.color, 255);

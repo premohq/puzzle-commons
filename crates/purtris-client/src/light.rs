@@ -147,77 +147,139 @@ const SKIN_SHADE: [f32; 3] = [0.86, 0.62, 0.64];
 /// mirrored on screen, so the light is mirrored here to land on the correct side.
 pub fn light(albedo: &Canvas, data: &Canvas, rig: &Rig, flip: bool) -> Canvas {
     let data = if data.w != albedo.w || data.h != albedo.h { crate::assets::resample(data, albedo.w, albedo.h) } else { data.clone() };
-    let s2l = srgb_to_lin_lut();
-    let l2s = lin_to_srgb_lut();
-    let fx = if flip { -1.0 } else { 1.0 };
-    let norm = |v: [f32; 3]| {
-        let l = (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt().max(1e-6);
-        [v[0] / l, v[1] / l, v[2] / l]
-    };
-    let ld = norm([rig.key_dir[0] * fx, rig.key_dir[1], rig.key_dir[2]]);
-    // half vector for the hair highlight (viewer straight on), lifted a little: anime "angel rings"
-    // sit high on the head
-    let hv = norm([ld[0] * 0.6, ld[1] * 0.6 + 0.25, ld[2] + 1.0]);
-    let rd = {
-        let (x, y) = (rig.rim_dir[0] * fx, rig.rim_dir[1]);
-        let l = (x * x + y * y).sqrt().max(1e-6);
-        (x / l, y / l)
-    };
-    // average ambient, for the unlit layers (eyes keep their color but not their brightness at night)
-    let amb_avg = [
-        (rig.key[0] + (rig.sky[0] + rig.ground[0]) * 0.5) / (Rig::STUDIO.key[0] + (Rig::STUDIO.sky[0] + Rig::STUDIO.ground[0]) * 0.5),
-        (rig.key[1] + (rig.sky[1] + rig.ground[1]) * 0.5) / (Rig::STUDIO.key[1] + (Rig::STUDIO.sky[1] + Rig::STUDIO.ground[1]) * 0.5),
-        (rig.key[2] + (rig.sky[2] + rig.ground[2]) * 0.5) / (Rig::STUDIO.key[2] + (Rig::STUDIO.sky[2] + Rig::STUDIO.ground[2]) * 0.5),
-    ];
+    let p = Prep::new(rig, flip);
     let mut out = Canvas::transparent(albedo.w, albedo.h);
     let w = albedo.w as usize;
     let work = (albedo.w * albedo.h) as usize * 8;
-    let r = *rig;
     crate::gfx::par_rows(&mut out.px, w, 0, albedo.h, work, |y, row| {
         let base = y as usize * w;
         for x in 0..w {
             let a = albedo.px[base + x];
-            let al = a >> 24;
-            if al == 0 {
-                continue;
+            if a >> 24 != 0 {
+                row[x] = p.shade(a, data.px[base + x]);
             }
-            let d = data.px[base + x];
-            let base_c = [s2l[((a >> 16) & 255) as usize], s2l[((a >> 8) & 255) as usize], s2l[(a & 255) as usize]];
-            let (nx, ny, cls) = if d >> 24 == 0 {
-                (0.0, 0.0, 0.75)
-            } else {
-                (((d >> 16) & 255) as f32 / 127.5 - 1.0, ((d >> 8) & 255) as f32 / 127.5 - 1.0, (d & 255) as f32 / 255.0)
-            };
-            let nz = (1.0 - nx * nx - ny * ny).max(0.0).sqrt();
-            let m = material(cls);
-            // two-tone cel: a hard (but anti-aliased) cut between lit and shade
-            let ndl = nx * ld[0] + ny * ld[1] + nz * ld[2];
-            let cut = r.cut + m.cut;
-            let lit = smoothstep(cut - 0.035, cut + 0.035, ndl);
-            let lit = 1.0 - (1.0 - lit) * m.shade;
-            let hemi = ny * 0.5 + 0.5;
-            let fres = 1.0 - nz;
-            let rim = smoothstep(0.28, 0.56, fres) * ((nx * rd.0 + ny * rd.1) * 1.4).clamp(0.0, 1.0) * m.rim;
-            let ndh = nx * hv[0] + ny * hv[1] + nz * hv[2];
-            let hi = smoothstep(0.93, 0.945, ndh) * m.spec * lit;
-            // bright hair (white, blonde) is already near the top: lift it less, or it blows out
-            let lum = base_c[0] * 0.3 + base_c[1] * 0.55 + base_c[2] * 0.15;
-            let hi = hi * (1.0 - lum.min(1.0) * 0.8);
-            let mut c = [0u32; 3];
-            for k in 0..3 {
-                let shade = r.shade[k] + (r.shade[k] * SKIN_SHADE[k] * 1.25 - r.shade[k]) * m.warm;
-                let key = r.key[k] * (shade + (1.0 - shade) * lit);
-                let amb = r.ground[k] + (r.sky[k] - r.ground[k]) * hemi;
-                // the hair highlight is a lighter shade of the hair itself, not a white sticker
-                let lit_c = base_c[k] * (key + amb) * (1.0 + hi * 1.1) + r.key[k] * hi * 0.025 + r.rim[k] * rim;
-                let unlit_c = base_c[k] * (0.45 + 0.55 * amb_avg[k]);
-                let v = lit_c + (unlit_c - lit_c) * m.unlit;
-                c[k] = l2s[(tone(v) * (OUT_N - 1) as f32) as usize] as u32;
-            }
-            row[x] = (al << 24) | (c[0] << 16) | (c[1] << 8) | c[2];
         }
     });
     out
+}
+
+/// Light the rectangle (x0, y0)-(x1, y1) of an animation frame, on the calling thread (the
+/// cast animator's worker, which should not compete with the renderer's pool). `data` is the
+/// half-size lighting map, read with bilinear filtering.
+pub fn light_rect(albedo: &Canvas, data: &Canvas, rig: &Rig, flip: bool, rect: (i32, i32, i32, i32)) -> Canvas {
+    let p = Prep::new(rig, flip);
+    let (x0, y0, x1, y1) = rect;
+    let mut out = Canvas::transparent((x1 - x0).max(1), (y1 - y0).max(1));
+    let (dw, dh) = (data.w, data.h);
+    let fx = dw as f32 / albedo.w as f32;
+    let fy = dh as f32 / albedo.h as f32;
+    let ch = |p: u32, s: u32| ((p >> s) & 255) as f32;
+    for y in y0..y1 {
+        let gy = ((y as f32 + 0.5) * fy - 0.5).max(0.0);
+        let ya = (gy as i32).min(dh - 1);
+        let yb = (ya + 1).min(dh - 1);
+        let ty = gy - ya as f32;
+        let arow = (y * albedo.w) as usize;
+        let orow = ((y - y0) * out.w) as usize;
+        for x in x0..x1 {
+            let a = albedo.px[arow + x as usize];
+            if a >> 24 == 0 {
+                continue;
+            }
+            let gx = ((x as f32 + 0.5) * fx - 0.5).max(0.0);
+            let xa = (gx as i32).min(dw - 1);
+            let xb = (xa + 1).min(dw - 1);
+            let tx = gx - xa as f32;
+            let q = [data.px[(ya * dw + xa) as usize], data.px[(ya * dw + xb) as usize], data.px[(yb * dw + xa) as usize], data.px[(yb * dw + xb) as usize]];
+            let wts = [(1.0 - tx) * (1.0 - ty), tx * (1.0 - ty), (1.0 - tx) * ty, tx * ty];
+            let mut c = [0.0f32; 3];
+            for k in 0..4 {
+                c[0] += ch(q[k], 16) * wts[k];
+                c[1] += ch(q[k], 8) * wts[k];
+                c[2] += ch(q[k], 0) * wts[k];
+            }
+            let d = 0xFF00_0000 | ((c[0] + 0.5) as u32) << 16 | ((c[1] + 0.5) as u32) << 8 | (c[2] + 0.5) as u32;
+            out.px[orow + (x - x0) as usize] = p.shade(a, d);
+        }
+    }
+    out
+}
+
+/// A rig made ready for shading pixels.
+struct Prep {
+    r: Rig,
+    ld: [f32; 3],
+    hv: [f32; 3],
+    rd: (f32, f32),
+    amb_avg: [f32; 3],
+    s2l: &'static [f32; 256],
+    l2s: &'static [u8; OUT_N],
+}
+
+impl Prep {
+    fn new(rig: &Rig, flip: bool) -> Prep {
+        let fx = if flip { -1.0 } else { 1.0 };
+        let norm = |v: [f32; 3]| {
+            let l = (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt().max(1e-6);
+            [v[0] / l, v[1] / l, v[2] / l]
+        };
+        let ld = norm([rig.key_dir[0] * fx, rig.key_dir[1], rig.key_dir[2]]);
+        // half vector for the hair highlight (viewer straight on), lifted a little: anime "angel rings"
+        // sit high on the head
+        let hv = norm([ld[0] * 0.6, ld[1] * 0.6 + 0.25, ld[2] + 1.0]);
+        let rd = {
+            let (x, y) = (rig.rim_dir[0] * fx, rig.rim_dir[1]);
+            let l = (x * x + y * y).sqrt().max(1e-6);
+            (x / l, y / l)
+        };
+        // average ambient, for the unlit layers (eyes keep their color but not their brightness at night)
+        let amb_avg = [
+            (rig.key[0] + (rig.sky[0] + rig.ground[0]) * 0.5) / (Rig::STUDIO.key[0] + (Rig::STUDIO.sky[0] + Rig::STUDIO.ground[0]) * 0.5),
+            (rig.key[1] + (rig.sky[1] + rig.ground[1]) * 0.5) / (Rig::STUDIO.key[1] + (Rig::STUDIO.sky[1] + Rig::STUDIO.ground[1]) * 0.5),
+            (rig.key[2] + (rig.sky[2] + rig.ground[2]) * 0.5) / (Rig::STUDIO.key[2] + (Rig::STUDIO.sky[2] + Rig::STUDIO.ground[2]) * 0.5),
+        ];
+        Prep { r: *rig, ld, hv, rd, amb_avg, s2l: srgb_to_lin_lut(), l2s: lin_to_srgb_lut() }
+    }
+
+    /// One albedo pixel `a` (alpha > 0) with its lighting data `d`.
+    #[inline]
+    fn shade(&self, a: u32, d: u32) -> u32 {
+        let (r, ld, hv, rd, s2l) = (&self.r, self.ld, self.hv, self.rd, self.s2l);
+        let al = a >> 24;
+        let base_c = [s2l[((a >> 16) & 255) as usize], s2l[((a >> 8) & 255) as usize], s2l[(a & 255) as usize]];
+        let (nx, ny, cls) = if d >> 24 == 0 {
+            (0.0, 0.0, 0.75)
+        } else {
+            (((d >> 16) & 255) as f32 / 127.5 - 1.0, ((d >> 8) & 255) as f32 / 127.5 - 1.0, (d & 255) as f32 / 255.0)
+        };
+        let nz = (1.0 - nx * nx - ny * ny).max(0.0).sqrt();
+        let m = material(cls);
+        // two-tone cel: a hard (but anti-aliased) cut between lit and shade
+        let ndl = nx * ld[0] + ny * ld[1] + nz * ld[2];
+        let cut = r.cut + m.cut;
+        let lit = smoothstep(cut - 0.035, cut + 0.035, ndl);
+        let lit = 1.0 - (1.0 - lit) * m.shade;
+        let hemi = ny * 0.5 + 0.5;
+        let fres = 1.0 - nz;
+        let rim = smoothstep(0.28, 0.56, fres) * ((nx * rd.0 + ny * rd.1) * 1.4).clamp(0.0, 1.0) * m.rim;
+        let ndh = nx * hv[0] + ny * hv[1] + nz * hv[2];
+        let hi = smoothstep(0.93, 0.945, ndh) * m.spec * lit;
+        // bright hair (white, blonde) is already near the top: lift it less, or it blows out
+        let lum = base_c[0] * 0.3 + base_c[1] * 0.55 + base_c[2] * 0.15;
+        let hi = hi * (1.0 - lum.min(1.0) * 0.8);
+        let mut c = [0u32; 3];
+        for k in 0..3 {
+            let shade = r.shade[k] + (r.shade[k] * SKIN_SHADE[k] * 1.25 - r.shade[k]) * m.warm;
+            let key = r.key[k] * (shade + (1.0 - shade) * lit);
+            let amb = r.ground[k] + (r.sky[k] - r.ground[k]) * hemi;
+            // the hair highlight is a lighter shade of the hair itself, not a white sticker
+            let lit_c = base_c[k] * (key + amb) * (1.0 + hi * 1.1) + r.key[k] * hi * 0.025 + r.rim[k] * rim;
+            let unlit_c = base_c[k] * (0.45 + 0.55 * self.amb_avg[k]);
+            let v = lit_c + (unlit_c - lit_c) * m.unlit;
+            c[k] = self.l2s[(tone(v) * (OUT_N - 1) as f32) as usize] as u32;
+        }
+        (al << 24) | (c[0] << 16) | (c[1] << 8) | c[2]
+    }
 }
 
 /// The time of day or mood a story scene is lit for.

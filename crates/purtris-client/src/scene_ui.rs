@@ -361,6 +361,10 @@ impl App {
             }
         }
         let done = shown >= full;
+        if !done && talking {
+            // the speaker nods along while the line types out
+            crate::puppet::talk(cur.who);
+        }
         if done {
             v.shown_t += dt;
         } else {
@@ -532,6 +536,8 @@ impl App {
         motes(&mut self.cv, world, mood, v.st, still);
 
         // ---------------------------------------------------------- the cast
+        // an expression per line, drawn in two light layers: stills with the puppet layer
+        crate::anim::set_stills_only(true);
         let dim_rig = dim(&rig);
         let fade_all = v.ending.map(|e| 1.0 - (e / OUTRO).min(1.0)).unwrap_or(1.0);
         let mut order: Vec<usize> = (0..v.actors.len()).collect();
@@ -542,27 +548,20 @@ impl App {
             let h = if crowd { 1080 } else { 1170 };
             let lift = a.lit * 12.0;
             let inward = a.lit * 16.0 * if a.right { -1.0 } else { 1.0 };
-            let hop = if still { 0.0 } else { (((v.st - a.expr_t) / 0.32).clamp(0.0, 1.0) * std::f32::consts::PI).sin() * 14.0 };
-            let breathe = if still { 0.0 } else { (self.t * 1.9 + i as f32).sin() * 2.2 * a.lit };
+            // breathing, the hop on a new expression and its crossfade come from puppet.rs
             let cx = (a.x + inward) as i32;
-            let bottom = (1296.0 - lift - hop + breathe + (1.0 - a.lit) * 10.0) as i32;
+            let bottom = (1296.0 - lift + (1.0 - a.lit) * 10.0) as i32;
             let al = (a.here * fade_all * 255.0) as u32;
             if al == 0 {
                 continue;
             }
-            // expression changes cross-fade quickly; speaking / listening cross-fades the light
-            let xf = ((v.st - a.expr_t) / 0.14).clamp(0.0, 1.0);
+            // speaking / listening cross-fades the light (expression crossfades: puppet.rs)
             let mut layer = |rig: &Rig, alpha: u32| {
                 if alpha == 0 {
                     return;
                 }
                 light::set(*rig);
-                if xf < 1.0 && a.prev_expr != a.expr {
-                    crate::assets::draw_char_ex(&mut self.cv, a.who, a.prev_expr, cx, bottom, h, alpha, a.right);
-                    crate::assets::draw_char_ex(&mut self.cv, a.who, a.expr, cx, bottom, h, (alpha as f32 * xf) as u32, a.right);
-                } else {
-                    crate::assets::draw_char_ex(&mut self.cv, a.who, a.expr, cx, bottom, h, alpha, a.right);
-                }
+                crate::assets::draw_char_ex(&mut self.cv, a.who, a.expr, cx, bottom, h, alpha, a.right);
             };
             if a.lit > 0.97 {
                 layer(&rig, al);
@@ -573,6 +572,7 @@ impl App {
                 layer(&rig, (al as f32 * a.lit) as u32);
             }
         }
+        crate::anim::set_stills_only(false);
         // get the next speaker's light ready a frame ahead (lighting a pose takes a moment)
         if let Some(next) = sc.lines.get(line + 1) {
             if v.actors.iter().any(|a| a.who == next.who) {

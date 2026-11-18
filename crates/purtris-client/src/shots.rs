@@ -87,6 +87,12 @@ pub fn bench(width: i32) {
         time("board well", cv, &|cv| cv.round_grad(308, 108, 260, 520, 4, 0xFF101630, 0xFF070A18, 255));
         time("board wash", cv, &|cv| cv.rect_a(308, 108 + 416, 260, 104, 0xFF88AAFF, 10));
         time("plate glass", cv, &|cv| cv.glass(300, 40, 276, 50, 25, 0xFF0A1124, 175));
+        // a character playing its 3D idle clip (two blended frames), menu and match size
+        for (h, name) in [(600, "clip char 600 (anim)"), (1130, "clip char 1130 (anim)")] {
+            crate::anim::draw(cv, "bench", "kaede", crate::anim::Mood::Idle, 900, 700, h, 255, true);
+            std::thread::sleep(std::time::Duration::from_millis(300));
+            time(name, cv, &|cv| crate::anim::draw(cv, "bench", "kaede", crate::anim::Mood::Idle, 900, 700, h, 255, true));
+        }
         time("grid 30 lines", cv, &|cv| {
             for i in 0..30 {
                 cv.rect_a(308 + i * 9, 108, 1, 520, 0xFF334466, 70);
@@ -598,4 +604,108 @@ pub fn lights(dir: &str, width: i32) {
         crate::png::write(&p, cv.w as usize, cv.h as usize, &cv.px).unwrap();
     }
     println!("wrote {}", dir);
+}
+
+/// `--anim-shots DIR [W]`: the live character animation (anim.rs) over three seconds: idle,
+/// expression changes with their reactions, talking, match one-shots. Writes every frame
+/// (anim_NNN.png) and a contact sheet of every 8th (anim_sheet.png).
+pub fn anim_shots(dir: &str, width: i32) {
+    use crate::puppet::{begin_frame, react, talk, React};
+    let _ = std::fs::create_dir_all(dir);
+    let mut cv = crate::gfx::Canvas::screen(width);
+    // (id, flip, cx, expression changes at times)
+    let cast: [(&str, bool, i32, &[(f32, &str)]); 4] = [
+        ("kaede", false, 190, &[(0.0, "smile"), (0.6, "delighted"), (1.6, "angry"), (2.3, "shocked")]),
+        ("mira", false, 500, &[(0.0, "normal"), (1.2, "smile"), (2.4, "sad")]),
+        ("nami", true, 800, &[(0.0, "smug"), (1.0, "p-rival"), (2.0, "sleepy")]),
+        ("hana", true, 1100, &[(0.0, "smile")]),
+    ];
+    let fps = 30.0;
+    let n = 96;
+    let mut frames = Vec::new();
+    for f in 0..n {
+        let t = 1.0 + f as f32 / fps;
+        let tt = t - 1.0;
+        begin_frame(t, false);
+        if (0.3..1.1).contains(&tt) {
+            talk("mira");
+        }
+        if f == 40 {
+            react("hana", React::Pump);
+        }
+        if f == 60 {
+            react("hana", React::Flinch);
+        }
+        if f == 75 {
+            react("hana", React::Cheer);
+        }
+        cv.clear(0xFF2A_3350);
+        cv.rect(0, 600, 1280, 120, 0xFF1D_2438);
+        for (id, flip, cx, plan) in cast.iter() {
+            let ex = plan.iter().rev().find(|(at, _)| tt >= *at).map(|p| p.1).unwrap_or("smile");
+            crate::assets::draw_char_ex(&mut cv, id, ex, *cx, 690, 600, 255, *flip);
+        }
+        let p = format!("{}/anim_{:03}.png", dir, f);
+        crate::png::write(&p, cv.w as usize, cv.h as usize, &cv.px).unwrap();
+        if f % 8 == 0 {
+            frames.push(crate::assets::resample(&cv, cv.w / 3, cv.h / 3));
+        }
+    }
+    let (fw, fh) = (frames[0].w, frames[0].h);
+    let cols = 4;
+    let rows = frames.len().div_ceil(cols);
+    let mut sheet = vec![0xFF00_0000u32; (fw * cols as i32 * fh * rows as i32) as usize];
+    for (k, fr) in frames.iter().enumerate() {
+        let (ox, oy) = ((k % cols) as i32 * fw, (k / cols) as i32 * fh);
+        for y in 0..fh {
+            let d = ((oy + y) * fw * cols as i32 + ox) as usize;
+            sheet[d..d + fw as usize].copy_from_slice(&fr.px[(y * fw) as usize..((y + 1) * fw) as usize]);
+        }
+    }
+    let p = format!("{}/anim_sheet.png", dir);
+    crate::png::write(&p, (fw * cols as i32) as usize, (fh * rows as i32) as usize, &sheet).unwrap();
+    println!("wrote {} frames and {}", n, p);
+    // a 1v1 with the characters beside the boards, through the real match screen: they react to
+    // big clears and garbage, and to winning and losing
+    let synth = Arc::new(Mutex::new(crate::audio::Synth::new()));
+    let mut app = App::new(crate::input::Input::new(None), synth, false);
+    app.st = crate::save::Settings::default();
+    app.st.benched = true;
+    app.st.characters = true;
+    app.st.chars_versus = true;
+    app.apply_settings();
+    app.cv = crate::gfx::Canvas::screen(width);
+    let h = quick_header(5, Mode::Versus, &[bot(Profile::QuadPpt), bot(Profile::QuadPpt)]);
+    let mut g = Game::new(h, [None; 6], Default::default(), Origin::Replay, true).unwrap();
+    g.chars = [crate::cast::CAST.iter().position(|m| m.id == "kai").unwrap_or(1), crate::cast::CAST.iter().position(|m| m.id == "mira").unwrap_or(0), 0, 0, 0, 0];
+    g.countdown = 0;
+    app.screen = Screen::Play(Box::new(g));
+    let secs: usize = std::env::var("PC_ANIM_SECS").ok().and_then(|s| s.parse().ok()).unwrap_or(20);
+    for f in 0..60 * secs {
+        let t0 = std::time::Instant::now();
+        app.frame(None, 1.0 / 60.0);
+        if let Some(rest) = std::time::Duration::from_millis(16).checked_sub(t0.elapsed()) {
+            std::thread::sleep(rest);
+        }
+        if f % 30 == 0 {
+            save(&app, dir, &format!("match_{:04}", f));
+        }
+        if !matches!(app.screen, Screen::Play(_)) {
+            save(&app, dir, &format!("match_end_{:04}", f));
+            break;
+        }
+    }
+    println!("puppet stats (characters, reactions): {:?}", crate::puppet::stats());
+    // the main menu, paced in real time: its host plays her idle clip
+    app.screen = Screen::Main(ListState::default());
+    for f in 0..60 * 4 {
+        let t0 = std::time::Instant::now();
+        app.frame(None, 1.0 / 60.0);
+        if let Some(rest) = std::time::Duration::from_millis(16).checked_sub(t0.elapsed()) {
+            std::thread::sleep(rest);
+        }
+        if f % 20 == 0 {
+            save(&app, dir, &format!("menu_{:04}", f));
+        }
+    }
 }
