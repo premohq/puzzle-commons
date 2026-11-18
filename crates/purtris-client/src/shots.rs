@@ -260,6 +260,17 @@ pub fn run(dir: &str, width: i32) {
         ("18_training", Screen::Training),
         ("19_seeds", Screen::Seeds(ListState::default(), 0xC0FFEE, String::new())),
         ("20_solo", Screen::Solo),
+        ("26_arcade", Screen::Arcade(ListState::default(), 0)),
+        ("27_replays", Screen::Replays(ListState::default(), Vec::new())),
+        ("28_ranks", Screen::Ranks { page: 0, confirm: false }),
+        ("29_setup", Screen::Setup { page: 0, sel: 0 }),
+        ("29b_setup_you", Screen::Setup { page: 4, sel: 0 }),
+        ("30_tour", Screen::Tour { page: 0, t: 2.0 }),
+        ("31_more_rules", Screen::Versus(Box::new({
+            let mut r = crate::app::Room::new();
+            r.more = true;
+            r
+        }))),
     ];
     for (n, sc) in screens {
         app.screen = sc;

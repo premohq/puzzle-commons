@@ -7,7 +7,7 @@
 //! band in the bottom-right corner.
 
 use crate::font::Weight;
-use crate::gfx::{darken, lighten, Canvas};
+use crate::gfx::{darken, lighten, mix, Canvas};
 use crate::input::Nav;
 use crate::theme::Look;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
@@ -145,6 +145,7 @@ pub enum RK {
     Act,
     Opt,
     Head,
+    #[allow(dead_code)]
     Info,
 }
 
@@ -265,45 +266,76 @@ pub fn list(cv: &mut Canvas, l: &Look, nav: &Nav, rows: &[Row], s: &mut ListStat
             }
         }
     }
-    // the card behind the rows
+    // the plate behind the rows, then each row as a slanted slab like the menu tiles
     let shown = rows.len().min(s.scroll + g.visible) - s.scroll;
-    card(cv, g.x - 22, g.y - 16, g.w + 44, shown as i32 * g.row_h + 32);
+    plate(cv, g.x - 24, g.y - 22, g.w + 52, shown as i32 * g.row_h + 38);
     let sc = g.scale;
+    let c = section();
     for (vi, k) in (s.scroll..s.scroll + shown).enumerate() {
         let r = &rows[k];
         let y = g.y + vi as i32 * g.row_h;
         let sel = k == s.sel;
-        let ty = y + (g.row_h - (Canvas::px(sc) * 0.74) as i32) / 2 - 1;
+        let rh = (g.row_h - 6).max(16);
+        let ty = y + 3 + (rh - (Canvas::px(sc) * 1.05) as i32) / 2;
         match r.kind {
             RK::Head => {
+                // a kicker in the section tint with a slanted rule
                 let hs = (sc - 1).max(1);
-                let hc = lighten(section(), 110);
-                cv.text_weight(g.x + 4, y + g.row_h - (Canvas::px(hs) * 1.25) as i32, &r.label.to_uppercase(), hs, hc, 255, Weight::Bold);
-                cv.rect_a(g.x + 4, y + g.row_h - 4, g.w - 8, 2, hc, 110);
+                let hc = lighten(c, 120);
+                let ky = y + g.row_h - (Canvas::px(hs) * 1.3) as i32 - 2;
+                cv.text_weight(g.x + 4, ky, &r.label.to_uppercase(), hs, hc, 255, Weight::Bold);
+                let lw = Canvas::text_wb(&r.label.to_uppercase(), hs, Weight::Bold) + 14;
+                cv.poly(&slant(g.x + 4 + lw, y + g.row_h - 9, g.w - lw - 8, 3, 3), hc, 140);
+            }
+            RK::Info => {
+                cv.text_weight(g.x + 8, ty, &nice(&r.label), sc, l.dim, 255, Weight::Regular);
+                let v = nice(&r.value);
+                if !v.is_empty() {
+                    let vw = Canvas::text_wb(&v, sc, Weight::Regular);
+                    cv.text_weight(g.x + g.w - 8 - vw, ty, &v, sc, l.dim, 255, Weight::Regular);
+                }
             }
             _ => {
+                row_slab(cv, g.x - 10, y + 3, g.w + 20, rh, sel, t);
                 if sel {
-                    highlight(cv, g.x - 10, y + 3, g.w + 20, g.row_h - 6, t);
                     // the arcade cursor: a white arrow pointing at the chosen row
-                    let (ax, ay) = ((g.x - 30) as f32 + ((t * 6.0).sin() * 2.0), (y + g.row_h / 2) as f32);
-                    cv.tri([(ax + 12.0, ay), (ax, ay - 9.0), (ax, ay + 9.0)], darken(section(), 120), 255);
-                    cv.tri([(ax + 10.0, ay - 1.0), (ax - 1.0, ay - 9.0), (ax - 1.0, ay + 7.0)], 0xFFFF_FFFF, 255);
-                } else if vi % 2 == 1 && r.kind != RK::Info {
-                    cv.round_rect(g.x - 10, y + 3, g.w + 20, g.row_h - 6, (g.row_h - 6) / 2, 0xFFFF_FFFF, 10);
+                    let (ax, ay) = ((g.x - 34) as f32 + ((t * 6.0).sin() * 2.0), (y + 3 + rh / 2) as f32);
+                    cv.tri([(ax + 13.0, ay + 1.5), (ax, ay - 8.0), (ax, ay + 11.0)], darken(c, 130), 255);
+                    cv.tri([(ax + 12.0, ay), (ax - 1.0, ay - 9.0), (ax - 1.0, ay + 9.0)], 0xFFFF_FFFF, 255);
                 }
-                let col = if r.kind == RK::Info { l.dim } else if sel { 0xFFFF_FFFF } else { l.text };
                 let label = nice(&r.label);
-                let r = &Row { label, value: nice(&r.value), kind: r.kind };
-                let w = if sel { Weight::Bold } else { Weight::Regular };
-                let shade = if sel { darken(section(), 150) } else { 0xFF00_0000 };
-                cv.text_weight(g.x + 8 + 1, ty + 1, &r.label, sc, shade, if sel { 200 } else { 120 }, w);
-                cv.text_weight(g.x + 8, ty, &r.label, sc, col, 255, w);
-                if !r.value.is_empty() {
-                    let v = if r.kind == RK::Opt && sel { format!("\u{2190}  {}  \u{2192}", r.value) } else { r.value.clone() };
-                    let vw = Canvas::text_wb(&v, sc, Weight::Regular);
-                    let vc = if sel { 0xFFFF_FFFF } else if r.kind == RK::Opt { l.accent } else { l.dim };
-                    cv.text_weight(g.x + g.w - 8 - vw + 1, ty + 1, &v, sc, shade, if sel { 200 } else { 120 }, Weight::Regular);
-                    cv.text_weight(g.x + g.w - 8 - vw, ty, &v, sc, vc, 255, Weight::Regular);
+                let value = nice(&r.value);
+                // the value sits in a pill on the right: white when chosen, smoky otherwise
+                let mut right = g.x + g.w - 2;
+                if !value.is_empty() {
+                    let vs = sc.min(2);
+                    let opt = r.kind == RK::Opt;
+                    let vw = Canvas::text_wb(&value, vs, Weight::Bold);
+                    let ph = (rh - 10).max(14);
+                    let pw = vw + if opt && sel { 52 } else { 26 };
+                    let (px, py) = (right - pw, y + 3 + (rh - ph) / 2);
+                    let vy = py + (ph - (Canvas::px(vs) * 1.05) as i32) / 2;
+                    if sel {
+                        cv.round_rect(px, py, pw, ph, ph / 2, 0xFFFF_FFFF, 255);
+                        let ink = darken(c, 140);
+                        if opt {
+                            let cy = (py + ph / 2) as f32;
+                            cv.tri([((px + 10) as f32, cy), ((px + 18) as f32, cy - 6.0), ((px + 18) as f32, cy + 6.0)], ink, 255);
+                            cv.tri([((px + pw - 10) as f32, cy), ((px + pw - 18) as f32, cy - 6.0), ((px + pw - 18) as f32, cy + 6.0)], ink, 255);
+                        }
+                        cv.text_weight(px + (pw - vw) / 2, vy, &value, vs, ink, 255, Weight::Bold);
+                    } else {
+                        cv.round_rect(px, py, pw, ph, ph / 2, 0xFF06_0A1E, 150);
+                        cv.text_weight(px + (pw - vw) / 2, vy, &value, vs, if opt { lighten(c, 130) } else { l.text }, 255, Weight::Bold);
+                    }
+                    right = px - 10;
+                }
+                let _ = right;
+                if sel {
+                    outlined(cv, g.x + 10, ty, &label, sc, 0xFFFF_FFFF, darken(c, 140), 2, Weight::Display);
+                } else {
+                    cv.text_weight(g.x + 11, ty + 2, &label, sc, 0xFF00_0000, 110, Weight::Display);
+                    cv.text_weight(g.x + 10, ty, &label, sc, 0xFFF2_F4FF, 240, Weight::Display);
                 }
             }
         }
@@ -326,24 +358,74 @@ pub fn highlight(cv: &mut Canvas, x: i32, y: i32, w: i32, h: i32, t: f32) {
     cv.round_rect(x + h / 3, y + 2, w - h * 2 / 3, h * 2 / 5, h / 5, 0xFFFF_FFFF, 38);
 }
 
-/// A side card in the house style (see [`card`]).
+/// A side panel in the house style (see [`plate`]).
 pub fn panel(cv: &mut Canvas, x: i32, y: i32, w: i32, h: i32, _l: &Look) {
-    card(cv, x, y, w, h);
+    plate(cv, x, y, w, h);
 }
 
-/// The card that holds lists and side panels: a white rim, a deep navy body, and a strip of
-/// the section color with halftone dots along the top, like the menu tiles.
-pub fn card(cv: &mut Canvas, x: i32, y: i32, w: i32, h: i32) {
+/// The body color of plates and resting rows: deep navy with a little of the section in it.
+pub fn plate_color() -> u32 {
+    mix(0xFF13_1938, section(), 40)
+}
+
+/// The panel that holds lists and side text, cut like the menu tiles: a slanted slab with a
+/// white rim and a drop shadow, a band of the section color with halftone dots along the top,
+/// and a few dots fading into the lower-right corner.
+pub fn plate(cv: &mut Canvas, x: i32, y: i32, w: i32, h: i32) {
     let c = section();
-    let r = 20;
-    cv.soft_shadow(x, y, w, h, r, 12, 110);
-    cv.round_rect(x - 3, y - 3, w + 6, h + 6, r + 3, 0xFFFF_FFFF, 215);
-    cv.round_grad(x, y, w, h, r, 0xFF1B_2352, 0xFF0D_1230, 246);
-    let sh = 10.min(h / 4);
-    cv.set_clip(x, y, w, sh + 2);
-    cv.round_rect(x, y, w, sh * 3, r, c, 255);
-    cv.reset_clip();
-    halftone(cv, x + w / 3, y, w - w / 3 - r / 2, sh, 0, lighten(c, 70), 150, 7, 2.2, 0.2);
+    let k = 12.min(h / 6);
+    let body = plate_color();
+    cv.poly(&slant(x + 8, y + 12, w, h, k), 0xFF00_0000, 85);
+    slab(cv, x, y, w, h, k, body, 0xFFFF_FFFF, 3);
+    // a soft sheen across the top half
+    cv.poly(&slant_band(x, y, w, h, k, 0.0, 0.5), 0xFFFF_FFFF, 8);
+    let bh = 12.min(h / 5).max(4);
+    let tb = bh as f32 / h.max(1) as f32;
+    cv.poly(&slant_band(x, y, w, h, k, 0.0, tb), c, 255);
+    let bk = (k as f32 * tb).round() as i32;
+    halftone(cv, x + k - bk, y, w, bh, bk, lighten(c, 80), 160, 7, 2.3, 0.25);
+    halftone(cv, x, y + bh, w, h - bh, k - bk, lighten(body, 26), 90, 13, 3.4, 0.72);
+}
+
+/// A settings row on the house slabs: the slab (none for read-only info), then the label,
+/// outlined in the display face when chosen. Controls are drawn on top by the caller.
+#[allow(clippy::too_many_arguments)]
+pub fn setting_row(cv: &mut Canvas, x: i32, y: i32, w: i32, h: i32, label: &str, sel: bool, info: bool, dim: u32, t: f32) {
+    let cy = y + h / 2;
+    if info {
+        cv.text_weight(x + 18, cy - 12, label, 2, dim, 255, Weight::Regular);
+        return;
+    }
+    row_slab(cv, x, y + 4, w, h - 8, sel, t);
+    if sel {
+        let c = section();
+        let (ax, ay) = ((x - 24) as f32 + ((t * 6.0).sin() * 2.0), cy as f32);
+        cv.tri([(ax + 13.0, ay + 1.5), (ax, ay - 8.0), (ax, ay + 11.0)], darken(c, 130), 255);
+        cv.tri([(ax + 12.0, ay), (ax - 1.0, ay - 9.0), (ax - 1.0, ay + 9.0)], 0xFFFF_FFFF, 255);
+        outlined(cv, x + 20, cy - 13, label, 2, 0xFFFF_FFFF, darken(c, 140), 2, Weight::Display);
+    } else {
+        cv.text_weight(x + 21, cy - 11, label, 2, 0xFF00_0000, 110, Weight::Display);
+        cv.text_weight(x + 20, cy - 13, label, 2, 0xFFF2_F4FF, 240, Weight::Display);
+    }
+}
+
+/// A selectable row cut like a menu tile. Chosen: the section color with a white border, a
+/// breathing sheen and halftone. Resting: a slab a shade lighter than the plate.
+#[allow(clippy::too_many_arguments)]
+pub fn row_slab(cv: &mut Canvas, x: i32, y: i32, w: i32, h: i32, sel: bool, t: f32) {
+    let c = section();
+    let k = (h / 3).min(14);
+    if sel {
+        let pulse = ((t * 4.0).sin() * 0.5 + 0.5) * 30.0;
+        cv.poly(&slant(x + 4, y + 5, w, h, k), 0xFF00_0000, 100);
+        slab(cv, x, y, w, h, k, c, 0xFFFF_FFFF, 3);
+        cv.poly(&slant_band(x, y, w, h, k, 0.0, 0.45), 0xFFFF_FFFF, 34 + pulse as u32);
+        halftone(cv, x, y, w, h, k, lighten(c, 70), 150, 9, 2.8, 0.5);
+    } else {
+        cv.poly(&slant(x, y, w, h, k), lighten(plate_color(), 18), 255);
+        cv.poly(&slant_band(x, y, w, h, k, 0.0, 0.45), 0xFFFF_FFFF, 10);
+        cv.poly(&slant_band(x, y, w, h, k, 0.92, 1.0), 0xFF00_0000, 60);
+    }
 }
 
 const ACRONYMS: [&str; 14] = ["KO", "NES", "DAS", "ARR", "SDF", "SOCD", "CPU", "TSS", "TSD", "TST", "PC", "B2B", "HD", "UI"];

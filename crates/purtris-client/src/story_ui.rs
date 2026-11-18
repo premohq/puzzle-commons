@@ -8,7 +8,7 @@ use crate::game::Origin;
 use crate::gfx::Canvas;
 use crate::input::{Device, Nav};
 use crate::theme::look;
-use crate::ui::{self, GLASS, GLASS_A};
+use crate::ui;
 use purtris_sim::{MatchHeader, SeatKind};
 
 /// Character select state: one cursor per seat; bots get characters automatically.
@@ -148,7 +148,9 @@ impl App {
             let (x, y) = pos(k);
             let m = &CAST[k];
             let hovered: Vec<usize> = humans.iter().copied().filter(|&i| s.cursor[i] == k).collect();
-            self.cv.glass(x, y, tile, tile, 18, GLASS, if hovered.is_empty() { 150 } else { 110 });
+            // a portrait tile: white rim (brighter when someone is on it) over the plate color
+            self.cv.round_rect(x - 2, y - 2, tile + 4, tile + 4, 18, 0xFFFF_FFFF, if hovered.is_empty() { 110 } else { 255 });
+            self.cv.round_grad(x, y, tile, tile, 16, crate::gfx::lighten(ui::plate_color(), 34), ui::plate_color(), 255);
             self.cv.set_clip(x + 3, y + 3, tile - 6, tile - 6);
             crate::assets::draw_portrait(&mut self.cv, m.id, if hovered.is_empty() { "normal" } else { "smile" }, x - 8, y + 2, tile + 16, 255, false);
             self.cv.reset_clip();
@@ -175,7 +177,7 @@ impl App {
             let w = cw - 12;
             let m = &CAST[shown[i]];
             let human = s.header.seats[i].kind == SeatKind::Human;
-            self.cv.glass(x, card_y, w, card_h, 22, GLASS, GLASS_A);
+            ui::plate(&mut self.cv, x, card_y, w, card_h);
             self.cv.set_clip(x + 2, card_y + 2, w - 4, card_h - 4);
             let expr = if s.ready[i] && human { "delighted" } else if human { "smile" } else { "p-rival" };
             crate::assets::draw_char_ex(&mut self.cv, m.id, expr, x + w / 2, card_y + card_h + 210, 560, 255, j % 2 == 1);
@@ -283,8 +285,8 @@ impl App {
         self.bg_blur(30);
         let bob = if self.st.reduce_motion { 0 } else { ((self.t * 2.0).sin() * 3.0) as i32 };
         crate::assets::draw_char_ex(&mut self.cv, "mira", if shown.is_empty() { "smile" } else { "delighted" }, 300, 1250 + bob, 1130, 255, false);
-        self.cv.glass(x, y, w, 470, 30, GLASS, 215);
-        self.cv.text_weight(x + 40, y + 34, "Who's carrying the box?", 4, 0xFFFF_FFFF, 255, Weight::Black);
+        ui::plate(&mut self.cv, x, y, w, 470);
+        ui::outlined(&mut self.cv, x + 40, y + 36, "Who's carrying the box?", 4, 0xFFFF_FFFF, crate::gfx::darken(ui::section(), 140), 3, Weight::Display);
         self.cv.text_s(x + 40, y + 92, &cast::say("Name your courier and choose how {she} looks."), 2, l.dim);
         // the name
         let (fx, fy, fw, fh) = (x + 40, y + 140, w - 80, 86);
